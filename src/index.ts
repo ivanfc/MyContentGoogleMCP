@@ -21,7 +21,11 @@ import { assertReadable, campaignDetail, campaignOverview, changeHistory, listAc
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
 
-const ok = (data: unknown): ToolResult => ({ content: [{ type: "text", text: JSON.stringify(data, null, 2) }] });
+const ok = (data: unknown): ToolResult => ({
+	content: [{ type: "text", text: JSON.stringify(data, null, 2) }],
+	// Un plan rechazado (barreras/validación) o un apply fallido se marcan como error para el modelo.
+	...((data as { ok?: boolean })?.ok === false ? { isError: true } : {}),
+});
 const fail = (e: unknown): ToolResult => ({
 	isError: true,
 	content: [{ type: "text", text: e instanceof GoogleAdsApiError ? `${e.message}\n\n${JSON.stringify(e.toJSON(), null, 2)}` : e instanceof Error ? e.message : String(e) }],

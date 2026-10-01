@@ -7,7 +7,7 @@
 	"name": "mycontent-google-ads-mcp",
 	"main": "src/index.ts",
 	"compatibility_date": "2026-09-01",
-	"compatibility_flags": ["nodejs_compat"],
+	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
 	"migrations": [{ "new_sqlite_classes": ["GoogleAdsMCP"], "tag": "v1" }],
 	"durable_objects": {
 		"bindings": [{ "class_name": "GoogleAdsMCP", "name": "MCP_OBJECT" }]
