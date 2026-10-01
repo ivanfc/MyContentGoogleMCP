@@ -113,7 +113,7 @@ describe("plan Demand Gen", () => {
 		expect(idx("campaignBudgetOperation")).toBeLessThan(idx("campaignOperation"));
 		expect(idx("campaignOperation")).toBeLessThan(idx("adGroupOperation"));
 		expect(idx("customAudienceOperation")).toBeLessThan(idx("adGroupCriterionOperation"));
-		expect(d.warnings.join()).toMatch(/ENGAGEMENT\/YOUTUBE_HOSTED/);
+		expect(d.warnings?.join()).toMatch(/ENGAGEMENT\/YOUTUBE_HOSTED/);
 	});
 
 	it("pasa las barreras y valida con validateOnly", async () => {
