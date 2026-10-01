@@ -129,3 +129,13 @@ describe("barreras", () => {
 		expect((await violations([{ campaignOperation: { create: {}, update: {} } }])).join()).toMatch(/exactamente una acción/);
 	});
 });
+
+describe("budgetReader", () => {
+	it("no interpola resource names malformados en GAQL", async () => {
+		const { budgetReader } = await import("../src/plans/engine");
+		const { setup } = await import("./helpers");
+		const { client, ads } = setup();
+		expect(await budgetReader(client, CID)(`customers/${CID}/campaignBudgets/1' OR campaign_budget.id > '0`)).toBeUndefined();
+		expect(ads.queries.filter((q) => q.includes("campaign_budget"))).toHaveLength(0);
+	});
+});

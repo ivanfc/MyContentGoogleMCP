@@ -67,7 +67,7 @@ export async function computeStateHash(client: GoogleAdsClient, customerId: stri
 
 export function budgetReader(client: GoogleAdsClient, customerId: string) {
 	return async (resourceName: string): Promise<BudgetInfo | undefined> => {
-		if (!resourceName || !resourceName.startsWith(`customers/${customerId}/campaignBudgets/`)) return undefined;
+		if (!resourceName || !new RegExp(`^customers/${customerId}/campaignBudgets/\\d+$`).test(resourceName)) return undefined;
 		const rows = await client.searchAll(
 			customerId,
 			`SELECT campaign_budget.amount_micros, campaign_budget.explicitly_shared, campaign_budget.reference_count FROM campaign_budget WHERE campaign_budget.resource_name = '${resourceName}'`,
