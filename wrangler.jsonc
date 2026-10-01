@@ -1,0 +1,32 @@
+/**
+ * Configuración de Wrangler: https://developers.cloudflare.com/workers/wrangler/configuration/
+ * Los secretos (tokens, client secrets) NO van aquí: se cargan con `wrangler secret put`.
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "mycontent-google-ads-mcp",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-01",
+	"compatibility_flags": ["nodejs_compat"],
+	"migrations": [{ "new_sqlite_classes": ["GoogleAdsMCP"], "tag": "v1" }],
+	"durable_objects": {
+		"bindings": [{ "class_name": "GoogleAdsMCP", "name": "MCP_OBJECT" }]
+	},
+	"kv_namespaces": [
+		// Estado del proveedor OAuth (clientes, grants, tokens).
+		{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_OAUTH_KV_ID" },
+		// Planes de cambio (TTL 30 min) y registro de auditoría.
+		{ "binding": "STATE_KV", "id": "REPLACE_WITH_STATE_KV_ID" }
+	],
+	"vars": {
+		"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "2567236642",
+		"ALLOWED_CUSTOMER_IDS": "8460514008",
+		"ALLOWED_EMAILS": "ivan@mycontent.agency",
+		"MAX_DAILY_BUDGET": "60",
+		"MAX_BUDGET_INCREASE_PCT": "100",
+		// URL pública del Worker (audiencia OAuth). Vacía = origen de la petición.
+		"PUBLIC_BASE_URL": ""
+	},
+	"observability": { "enabled": true },
+	"dev": { "port": 8788 }
+}
