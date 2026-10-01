@@ -9,8 +9,7 @@
 		"cf-typegen": "wrangler types",
 		"type-check": "tsc --noEmit",
 		"test": "vitest run",
-		"integration:read": "node --experimental-strip-types scripts/integration.ts read",
-		"integration:validate": "node --experimental-strip-types scripts/integration.ts validate"
+		"integration": "vitest run --config vitest.integration.config.ts"
 	},
 	"dependencies": {
 		"@cloudflare/workers-oauth-provider": "^1.2.1",
