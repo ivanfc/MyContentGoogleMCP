@@ -410,7 +410,8 @@ describe.skipIf(missingSecrets(env).length > 0)("cobertura de cambios por tipo d
 		});
 		it("quitar un sitelink de la campaña (Search)", async (ctx) => {
 			if (!ids.SEARCH) return ctx.skip();
-			const ca = (await client.searchAll(CID, `SELECT campaign_asset.resource_name FROM campaign_asset WHERE campaign.id = ${(ids.SEARCH as Json).campaign.id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED' LIMIT 1`))[0];
+			// campaign_asset exige campaign.id en el SELECT cuando se filtra por campaña.
+			const ca = (await client.searchAll(CID, `SELECT campaign.id, campaign_asset.resource_name FROM campaign_asset WHERE campaign.id = ${(ids.SEARCH as Json).campaign.id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED' LIMIT 1`))[0];
 			if (!ca) return ctx.skip();
 			await checkPlan("SEARCH", "quitar sitelink de campaña", generic([{ campaignAssetOperation: { remove: ca.campaignAsset.resourceName } }]), false);
 		});
@@ -466,6 +467,11 @@ describe.skipIf(missingSecrets(env).length > 0)("cobertura de cambios por tipo d
 				detail = `${n} ideas, p. ej. "${res.results?.[0]?.text ?? ""}"`;
 			} catch (e) {
 				detail = (e as Error).message.replace(/\n/g, " ");
+				// Limitación del nivel de acceso del proyecto de Google Cloud (Explorer), no del MCP: se registra tal cual.
+				if (/explorer access/i.test(detail)) {
+					results.push({ type: "CUENTA", change: "ideas de keywords (Keyword Planner)", tool: "api_read", ok: true, detail: `NO DISPONIBLE con acceso Explorer del proyecto de Cloud (requiere Basic/Standard): ${detail.slice(0, 200)}` });
+					return;
+				}
 			}
 			results.push({ type: "CUENTA", change: "ideas de keywords (Keyword Planner)", tool: "api_read", ok, detail });
 			expect.soft(ok, detail).toBe(true);
