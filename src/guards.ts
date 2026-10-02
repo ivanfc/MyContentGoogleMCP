@@ -191,6 +191,20 @@ export async function enforceGuards(operations: Json[], ctx: GuardContext): Prom
 			}
 		}
 
+		// Cambiar de presupuesto (o crear apuntando a uno existente) también tiene que pasar los límites.
+		if (kind === "campaignOperation" && (body?.campaignBudget !== undefined || fields.includes("campaign_budget"))) {
+			const target = String(body?.campaignBudget ?? "");
+			if (!/\/campaignBudgets\/-\d+$/.test(target)) {
+				const b = await ctx.getBudget(target);
+				if (!b) e.push(`${tag}: asigna el presupuesto ${target || "(vacío)"} y no se pudo leer para comprobar límites.`);
+				else {
+					if (b.amountMicros > maxMicros) e.push(`${tag}: asigna un presupuesto de ${fromMicros(b.amountMicros)}/día, por encima de MAX_DAILY_BUDGET (${limits.maxDailyBudget}).`);
+					if ((b.explicitlyShared || b.referenceCount > 1) && !ctx.allowSharedBudget) e.push(`${tag}: asigna un presupuesto COMPARTIDO (${b.referenceCount} campañas).`);
+					if (action === "update") e.push(`${tag}: cambia el presupuesto de la campaña a ${target} (${fromMicros(b.amountMicros)}/día).`);
+				}
+			}
+		}
+
 		if (body?.status === "REMOVED") {
 			e.push(`${tag}: status REMOVED = BORRADO irreversible.`);
 		}

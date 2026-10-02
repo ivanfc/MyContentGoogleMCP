@@ -8,9 +8,16 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-09-01",
 	"compatibility_flags": ["nodejs_compat", "global_fetch_strictly_public"],
-	"migrations": [{ "new_sqlite_classes": ["GoogleAdsMCP"], "tag": "v1" }],
+	"migrations": [
+		{ "new_sqlite_classes": ["GoogleAdsMCP"], "tag": "v1" },
+		// Cerrojo global para que un plan no se aplique dos veces en paralelo.
+		{ "new_sqlite_classes": ["PlanLock"], "tag": "v2" }
+	],
 	"durable_objects": {
-		"bindings": [{ "class_name": "GoogleAdsMCP", "name": "MCP_OBJECT" }]
+		"bindings": [
+			{ "class_name": "GoogleAdsMCP", "name": "MCP_OBJECT" },
+			{ "class_name": "PlanLock", "name": "PLAN_LOCK" }
+		]
 	},
 	"kv_namespaces": [
 		// Estado del proveedor OAuth (clientes, grants, tokens).

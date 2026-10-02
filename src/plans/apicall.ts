@@ -106,6 +106,8 @@ export function buildPath(m: MethodInfo, params: Record<string, string>): string
 		if (v === undefined || v === "") throw new Error(`Falta el parámetro de ruta "${k}" para ${m.id}.`);
 		if (k === "customerId") return normalizeCustomerId(v);
 		if (!/^[\w/~.-]+$/.test(v)) throw new Error(`Parámetro de ruta inválido "${k}": ${v}`);
+		// Sin segmentos vacíos, "." ni "..": la URL se normaliza al enviarla y podría acabar en otra cuenta.
+		if (v.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) throw new Error(`Parámetro de ruta inválido "${k}": ${v} (segmentos vacíos o relativos).`);
 		return v;
 	});
 }
@@ -129,7 +131,16 @@ export function guardApiCall(call: ApiCall, customerId: string, limits: Limits):
 	for (const r of refs) if (r !== `customers/${customerId}`) v.push(`Referencia a otra cuenta (${r}). Solo se permite customers/${customerId}.`);
 	if (HARD_BLOCKED_METHODS[call.methodId]) v.push(`${call.methodId} bloqueado (${HARD_BLOCKED_METHODS[call.methodId]}).`);
 	if (v.length) throw new GuardError(v);
-	if (NORMAL_WRITE_METHODS.has(call.methodId)) return [];
+	if (NORMAL_WRITE_METHODS.has(call.methodId)) {
+		// En customAudiences/customInterests solo crear es "normal": quitar o editar cambia la segmentación de todas
+		// las campañas que los usan (por el mutate general, ese borrado ya exigiría APPLY-ELEVATED).
+		if (/\.(customAudiences|customInterests)\.mutate$/.test(call.methodId)) {
+			const ops = (call.body as Json)?.operations;
+			const nonCreate = Array.isArray(ops) ? ops.filter((o: Json) => !o || o.create === undefined || o.update !== undefined || o.remove !== undefined).length : 1;
+			if (nonCreate) return [`${call.methodId}: ${nonCreate} operación(es) que editan o BORRAN segmentos existentes (afecta a todas las campañas que los usan).`];
+		}
+		return [];
+	}
 	const reason = ELEVATED_REASONS.find(([re]) => re.test(call.methodId))?.[1] ?? "método fuera del mutate general";
 	return [`${call.methodId}: ${reason}.`];
 }
