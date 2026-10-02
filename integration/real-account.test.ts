@@ -63,9 +63,13 @@ describe.skipIf(missing.length > 0)("cuenta real: solo lectura", () => {
 });
 
 describe.skipIf(missing.length > 0)("cuenta real: planes con validateOnly (NO se aplican)", () => {
-	it("bajar presupuesto de Neurored_EN_NATO_PMax_Leads a 10/día", async () => {
+	it("bajar presupuesto de Neurored_EN_NATO_PMax_Leads (a 10/día, o 1 menos si ya está en 10)", async () => {
 		const id = await campaignIdByName("Neurored_EN_NATO_PMax_Leads");
-		const r = await createPlan(deps, await buildCampaignBudgetPlan(client, CID, id, 10));
+		const cur = await client.searchAll(CID, `SELECT campaign_budget.amount_micros FROM campaign WHERE campaign.id = ${id}`);
+		const current = Number(cur[0].campaignBudget.amountMicros) / 1e6;
+		const target = current > 10 ? 10 : Math.max(1, current - 1);
+		console.log(`Presupuesto actual ${current} → plan a ${target}`);
+		const r = await createPlan(deps, await buildCampaignBudgetPlan(client, CID, id, target));
 		console.log(JSON.stringify(r, null, 2));
 		expect(r.ok).toBe(true);
 	});
@@ -90,12 +94,12 @@ describe.skipIf(missing.length > 0)("cuenta real: planes con validateOnly (NO se
 			],
 			ad_groups: [{ name: "TEST_MCP_AE_SG", custom_audience_keys: ["ff"], ads: [{ final_url: "https://www.neurored.com/" }] }],
 		};
-		let r = await createPlan(deps, await buildDemandGenPlan(client, CID, input, "CUSTOM_AUDIENCE_CRITERION"));
-		let mode = "CUSTOM_AUDIENCE_CRITERION";
+		let r = await createPlan(deps, await buildDemandGenPlan(client, CID, input, "AUDIENCE_RESOURCE"));
+		let mode = "AUDIENCE_RESOURCE";
 		if (!r.ok && r.stage === "validation") {
-			console.log("Primer intento (criterio custom_audience) rechazado:\n", r.message);
-			r = await createPlan(deps, await buildDemandGenPlan(client, CID, input, "AUDIENCE_RESOURCE"));
-			mode = "AUDIENCE_RESOURCE";
+			console.log("Primer intento (recurso Audience) rechazado:\n", r.message);
+			r = await createPlan(deps, await buildDemandGenPlan(client, CID, input, "CUSTOM_AUDIENCE_CRITERION"));
+			mode = "CUSTOM_AUDIENCE_CRITERION";
 		}
 		console.log(`audience_mode=${mode}\n${JSON.stringify(r, null, 2)}`);
 		expect(r.ok).toBe(true);

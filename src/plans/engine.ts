@@ -15,6 +15,18 @@ export interface Plan {
 	stateQueries: string[];
 	stateHash: string;
 	guardFlags: { allowCampaignEnable?: boolean; allowSharedBudget?: boolean };
+	preSteps?: PreStep[];
+}
+
+/**
+ * Operación previa en un servicio aparte (CustomAudienceService no existe en GoogleAdsService.Mutate).
+ * `placeholder` es el resource name temporal que usan las operaciones principales; en apply_plan se
+ * sustituye por el resource name real devuelto por la API.
+ */
+export interface PreStep {
+	service: "customAudiences";
+	placeholder: string;
+	operation: Json;
 }
 
 export interface Deps {
@@ -34,6 +46,7 @@ export interface PlanDraft {
 	/** GAQL que leen exactamente los campos que el plan va a tocar. Se re-ejecutan en apply_plan. */
 	stateQueries: string[];
 	guardFlags?: Plan["guardFlags"];
+	preSteps?: PreStep[];
 }
 
 export type PlanResult =
@@ -78,6 +91,67 @@ export function budgetReader(client: GoogleAdsClient, customerId: string) {
 	};
 }
 
+/** Operaciones que pasan por las barreras: pasos previos (en formato MutateOperation) + principales. */
+function guardedOps(preSteps: PreStep[] | undefined, operations: Json[]): Json[] {
+	return [...(preSteps ?? []).map((p) => ({ customAudienceOperation: p.operation })), ...operations];
+}
+
+function replacePlaceholders(operations: Json[], map: Map<string, string>): Json[] {
+	let s = JSON.stringify(operations);
+	for (const [ph, rn] of map) s = s.split(JSON.stringify(ph)).join(JSON.stringify(rn));
+	return JSON.parse(s);
+}
+
+/** Quita las operaciones que referencian `refs` (y, en cascada, las que referencian a esas). */
+function stripReferencing(operations: Json[], refs: string[]): { kept: Json[]; removed: number } {
+	const gone = new Set(refs);
+	let kept = operations;
+	let changed = true;
+	while (changed) {
+		changed = false;
+		const next: Json[] = [];
+		for (const op of kept) {
+			const txt = JSON.stringify(op);
+			if ([...gone].some((r) => txt.includes(JSON.stringify(r)))) {
+				const own = (Object.values(op)[0] as Json)?.create?.resourceName;
+				if (own) gone.add(own);
+				changed = true;
+			} else next.push(op);
+		}
+		kept = next;
+	}
+	return { kept, removed: operations.length - kept.length };
+}
+
+/**
+ * Valida con validateOnly. Los pasos previos se validan en su servicio; en las operaciones principales
+ * los placeholders se sustituyen por un custom audience existente de la cuenta (o, si no hay ninguno,
+ * se omiten las operaciones que dependen de ellos y se avisa).
+ */
+async function validate(deps: Deps, draft: PlanDraft, warnings: string[]) {
+	const pre = draft.preSteps ?? [];
+	if (pre.length) await deps.client.mutateService(draft.customerId, "customAudiences", pre.map((p) => p.operation), true);
+	if (!draft.operations.length) return;
+	if (!pre.length) {
+		await deps.client.mutate(draft.customerId, draft.operations, true);
+		return;
+	}
+	const existing = await deps.client.searchAll(
+		draft.customerId,
+		"SELECT custom_audience.resource_name FROM custom_audience WHERE custom_audience.status = 'ENABLED' LIMIT 1",
+	);
+	const stand = existing[0]?.customAudience?.resourceName as string | undefined;
+	if (stand) {
+		const map = new Map(pre.map((p) => [p.placeholder, stand] as [string, string]));
+		await deps.client.mutate(draft.customerId, replacePlaceholders(draft.operations, map), true);
+		warnings.push(`Validación: el segmento nuevo se ha sustituido por ${stand} solo para validar la campaña; en apply se usa el real.`);
+	} else {
+		const { kept, removed } = stripReferencing(draft.operations, pre.map((p) => p.placeholder));
+		if (kept.length) await deps.client.mutate(draft.customerId, kept, true);
+		warnings.push(`Validación parcial: ${removed} operación(es) que usan el segmento nuevo no se han podido validar (no hay ningún custom audience previo en la cuenta). Se validarán en apply.`);
+	}
+}
+
 function guardCtx(deps: Deps, customerId: string, flags: Plan["guardFlags"]) {
 	return {
 		customerId,
@@ -93,7 +167,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 	const warnings = draft.warnings ?? [];
 	const flags = draft.guardFlags ?? {};
 	try {
-		await enforceGuards(draft.operations, guardCtx(deps, draft.customerId, flags));
+		await enforceGuards(guardedOps(draft.preSteps, draft.operations), guardCtx(deps, draft.customerId, flags));
 	} catch (e) {
 		if (e instanceof GuardError) {
 			return { ok: false, stage: "guards", summary: draft.summary, warnings, errors: e.violations, message: e.message };
@@ -104,7 +178,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 	const stateHash = await computeStateHash(deps.client, draft.customerId, draft.stateQueries);
 
 	try {
-		await deps.client.mutate(draft.customerId, draft.operations, true);
+		await validate(deps, draft, warnings);
 	} catch (e) {
 		if (e instanceof GoogleAdsApiError) {
 			return { ok: false, stage: "validation", summary: draft.summary, warnings, errors: e.toJSON(), message: e.message };
@@ -127,6 +201,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 		stateQueries: draft.stateQueries,
 		stateHash,
 		guardFlags: flags,
+		...(draft.preSteps?.length ? { preSteps: draft.preSteps } : {}),
 	};
 	await deps.kv.put(`plan:${id}`, JSON.stringify(plan), { expirationTtl: PLAN_TTL_SECONDS });
 	return {
@@ -138,7 +213,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 		customer_id: plan.customerId,
 		summary: plan.summary,
 		warnings,
-		operations_count: plan.operations.length,
+		operations_count: plan.operations.length + (plan.preSteps?.length ?? 0),
 		validation: "OK (validateOnly)",
 	};
 }
@@ -212,7 +287,7 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 
 	// Defensa en profundidad: las barreras se re-evalúan con el estado actual.
 	try {
-		await enforceGuards(plan.operations, guardCtx(deps, plan.customerId, plan.guardFlags));
+		await enforceGuards(guardedOps(plan.preSteps, plan.operations), guardCtx(deps, plan.customerId, plan.guardFlags));
 	} catch (e) {
 		if (e instanceof GuardError) return { ok: false, message: e.message };
 		throw e;
@@ -226,7 +301,7 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		plan_id: plan.id,
 		kind: plan.kind,
 		summary: plan.summary,
-		operations: plan.operations,
+		operations: guardedOps(plan.preSteps, plan.operations),
 	};
 	if (currentHash !== plan.stateHash) {
 		await deps.kv.delete(`plan:${planId}`);
@@ -237,16 +312,34 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		};
 	}
 
+	// El plan es de un solo uso: se borra antes de ejecutar para que un reintento no duplique pasos previos.
+	await deps.kv.delete(`plan:${planId}`);
+	const created: string[] = [];
+	const responses: Json = {};
 	try {
-		const response = await deps.client.mutate(plan.customerId, plan.operations, false);
-		const resourceNames = extractResourceNames(response);
-		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: response, resource_names: resourceNames });
-		await deps.kv.delete(`plan:${planId}`);
-		return { ok: true, plan_id: planId, applied_operations: plan.operations.length, resource_names: resourceNames, summary: plan.summary };
+		const map = new Map<string, string>();
+		if (plan.preSteps?.length) {
+			const res = await deps.client.mutateService(plan.customerId, "customAudiences", plan.preSteps.map((p) => p.operation), false);
+			responses.customAudiences = res;
+			(res.results ?? []).forEach((r: Json, i: number) => {
+				map.set(plan.preSteps![i].placeholder, r.resourceName);
+				created.push(r.resourceName);
+			});
+			if (map.size !== plan.preSteps.length) throw new Error("La API no devolvió todos los custom audiences creados.");
+		}
+		if (plan.operations.length) {
+			const ops = map.size ? replacePlaceholders(plan.operations, map) : plan.operations;
+			const response = await deps.client.mutate(plan.customerId, ops, false);
+			responses.googleAds = response;
+			created.push(...extractResourceNames(response));
+		}
+		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: responses, resource_names: created });
+		return { ok: true, plan_id: planId, applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0), resource_names: created, summary: plan.summary };
 	} catch (e) {
 		const error = e instanceof GoogleAdsApiError ? e.toJSON() : String(e);
-		await writeAudit(deps, { ...base, outcome: "FAILED", error });
-		return { ok: false, message: e instanceof Error ? e.message : String(e), errors: error };
+		await writeAudit(deps, { ...base, outcome: "FAILED", error, api_response: responses, resource_names: created });
+		const partial = created.length ? ` Atención: ya se habían creado ${created.join(", ")} (pasos previos); la operación principal no se aplicó.` : "";
+		return { ok: false, message: `${e instanceof Error ? e.message : String(e)}${partial}`, errors: error, created_before_failure: created };
 	}
 }
 

@@ -249,7 +249,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 
 		this.tool(
 			"plan_create_demand_gen_campaign",
-			`Plan para crear una campaña Demand Gen COMPLETA en un único mutate atómico (IDs temporales): presupuesto, campaña en PAUSED, segmentos personalizados nuevos, grupos de anuncios con control de canales (demandGenAdGroupSettings.channelControls.selectedChannels: DISCOVER, GMAIL, DISPLAY, YOUTUBE_IN_FEED, YOUTUBE_IN_STREAM, YOUTUBE_SHORTS, MAPS; los no listados quedan en false), países e idiomas POR GRUPO (upgraded targeting) y anuncios multi-imagen (DemandGenMultiAssetAd). Importes en moneda de la cuenta. Puja: MAXIMIZE_CONVERSIONS (target_cpa opcional) o MAXIMIZE_CLICKS. El objetivo de conversión se lee de los existentes (por defecto SUBMIT_LEAD_FORM); nunca se crean acciones de conversión. Con reuse_assets_from_campaign_id rellena titulares/descripciones/logos/imágenes/nombre de empresa vacíos desde un PMax. Si el criterio de custom audience directo no valida, reintenta automáticamente con un recurso Audience. Ej: {name:"TEST_MCP_DemandGen_Discover", daily_budget:25, bidding_strategy:"MAXIMIZE_CONVERSIONS", country_codes:["AE","SG"], geo_target_type:"PRESENCE", language_codes:["en"], channels:["DISCOVER","GMAIL"], reuse_assets_from_campaign_id:"24049877221", new_custom_audiences:[{key:"a", name:"...", search_terms:["..."]}], ad_groups:[{name:"UAE", country_codes:["AE"], custom_audience_keys:["a"], ads:[{final_url:"https://..."}]}]}. ${PLAN_NOTE}`,
+			`Plan para crear una campaña Demand Gen COMPLETA en un mutate atómico (IDs temporales): presupuesto, campaña en PAUSED, segmentos personalizados nuevos (paso previo en CustomAudienceService, se crean justo antes), grupos de anuncios con control de canales (demandGenAdGroupSettings.channelControls.selectedChannels: DISCOVER, GMAIL, DISPLAY, YOUTUBE_IN_FEED, YOUTUBE_IN_STREAM, YOUTUBE_SHORTS, MAPS; los no listados quedan en false), países e idiomas POR GRUPO (upgraded targeting) y anuncios multi-imagen (DemandGenMultiAssetAd). Importes en moneda de la cuenta. Puja: MAXIMIZE_CONVERSIONS (target_cpa opcional) o MAXIMIZE_CLICKS. El objetivo de conversión se lee de los existentes (por defecto SUBMIT_LEAD_FORM); nunca se crean acciones de conversión. Con reuse_assets_from_campaign_id rellena titulares/descripciones/logos/imágenes/nombre de empresa vacíos desde un PMax. Las audiencias se asignan mediante un recurso Audience (lo exige Demand Gen); si no valida, reintenta con el criterio directo. Al reutilizar imágenes del PMax descarta las que no cumplen proporción/tamaño de Demand Gen. Ej: {name:"TEST_MCP_DemandGen_Discover", daily_budget:25, bidding_strategy:"MAXIMIZE_CONVERSIONS", country_codes:["AE","SG"], geo_target_type:"PRESENCE", language_codes:["en"], channels:["DISCOVER","GMAIL"], reuse_assets_from_campaign_id:"24049877221", new_custom_audiences:[{key:"a", name:"...", search_terms:["..."]}], ad_groups:[{name:"UAE", country_codes:["AE"], custom_audience_keys:["a"], ads:[{final_url:"https://..."}]}]}. ${PLAN_NOTE}`,
 			{
 				customer_id: customerId,
 				name: z.string().min(1),
@@ -286,11 +286,12 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				const cid = this.writable(customer_id);
 				const { client, deps } = this.services();
 				const dg = input as DemandGenInput;
-				const first = await createPlan(deps, await buildDemandGenPlan(client, cid, dg, "CUSTOM_AUDIENCE_CRITERION"));
+				// Verificado contra la API real: Demand Gen exige el recurso Audience (si no, CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET).
+				const first = await createPlan(deps, await buildDemandGenPlan(client, cid, dg, "AUDIENCE_RESOURCE"));
 				const hasAudiences = dg.ad_groups.some((g) => g.custom_audience_keys?.length || g.custom_audience_resource_names?.length || g.user_list_resource_names?.length);
-				if (first.ok || first.stage !== "validation" || !hasAudiences) return { audience_mode: "CUSTOM_AUDIENCE_CRITERION", ...first };
-				const second = await createPlan(deps, await buildDemandGenPlan(client, cid, dg, "AUDIENCE_RESOURCE"));
-				return { audience_mode: "AUDIENCE_RESOURCE", first_attempt_errors: first.errors, ...second };
+				if (first.ok || first.stage !== "validation" || !hasAudiences) return { audience_mode: "AUDIENCE_RESOURCE", ...first };
+				const second = await createPlan(deps, await buildDemandGenPlan(client, cid, dg, "CUSTOM_AUDIENCE_CRITERION"));
+				return { audience_mode: "CUSTOM_AUDIENCE_CRITERION", first_attempt_errors: first.errors, ...second };
 			},
 		);
 

@@ -53,6 +53,9 @@ export async function buildGenericPlan(client: GoogleAdsClient, cid: string, ope
 
 	for (const [i, wrapper] of ops.entries()) {
 		const kind = Object.keys(wrapper ?? {})[0];
+		if (kind === "customAudienceOperation") {
+			throw new Error(`#${i}: customAudienceOperation no existe en GoogleAdsService.Mutate. Usa plan_create_custom_audience.`);
+		}
 		const op = wrapper?.[kind] ?? {};
 		const action = ["create", "update", "remove"].find((a) => op[a] !== undefined) ?? "?";
 		const res = RESOURCE_BY_OP[kind];

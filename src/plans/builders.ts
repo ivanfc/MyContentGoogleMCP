@@ -341,14 +341,13 @@ export async function buildExcludePlacementsPlan(
 
 /* ------------------------------------------------------- custom audience */
 
-export function customAudienceBody(name: string, searchTerms: string[], urls: string[] = [], resourceName?: string): Json {
+export function customAudienceBody(name: string, searchTerms: string[], urls: string[] = []): Json {
 	const terms = [...new Set(searchTerms.map((s) => s.trim()).filter(Boolean))];
 	const cleanUrls = [...new Set(urls.map((s) => s.trim()).filter(Boolean))];
 	if (!terms.length && !cleanUrls.length) throw new Error("El segmento personalizado necesita al menos una búsqueda o una URL.");
 	for (const t of terms) if (t.length > 80 || t.split(/\s+/).length > 10) throw new Error(`Término demasiado largo (máx. 10 palabras / 80 caracteres): "${t}"`);
 	for (const u of cleanUrls) if (!/^https?:\/\//.test(u)) throw new Error(`URL sin protocolo: "${u}" (usa https://...)`);
 	return {
-		...(resourceName ? { resourceName } : {}),
 		name,
 		// SEARCH = "personas que han buscado cualquiera de estos términos en Google". Con URLs se usa AUTO.
 		type: cleanUrls.length ? "AUTO" : "SEARCH",
@@ -376,7 +375,9 @@ export async function buildCustomAudiencePlan(client: GoogleAdsClient, cid: stri
 			`(no existe) → Segmento personalizado "${name}" tipo ${body.type}`,
 			...body.members.map((m: Json) => `  · ${m.memberType}: ${m.keyword ?? m.url}`),
 		],
-		operations: [{ customAudienceOperation: { create: body } }],
+		// CustomAudienceService va por su propio endpoint (customAudiences:mutate), no por GoogleAdsService.Mutate.
+		preSteps: [{ service: "customAudiences", placeholder: `customers/${cid}/customAudiences/-1`, operation: { create: body } }],
+		operations: [],
 		stateQueries: [customAudienceStateQuery(name)],
 	};
 }

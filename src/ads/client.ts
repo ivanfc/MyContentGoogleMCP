@@ -184,6 +184,12 @@ export class GoogleAdsClient {
 		});
 	}
 
+	/** Mutate de un servicio específico (p. ej. customAudiences, que no existe en GoogleAdsService.Mutate). */
+	async mutateService(customerId: string, service: "customAudiences", operations: Json[], validateOnly: boolean): Promise<Json> {
+		const cid = normalizeCustomerId(customerId);
+		return this.request("POST", `customers/${cid}/${service}:mutate`, { operations, validateOnly });
+	}
+
 	async listAccessibleCustomers(): Promise<string[]> {
 		const res = await this.request("GET", "customers:listAccessibleCustomers");
 		return res.resourceNames ?? [];

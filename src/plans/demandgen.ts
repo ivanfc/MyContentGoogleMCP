@@ -2,7 +2,7 @@ import { type FetchLike, type GoogleAdsClient, type Json, assertDate, gaqlString
 import { toMicros } from "../config";
 import { getCampaignAssets } from "./assets";
 import { assertCustomAudienceNameFree, customAudienceBody, customAudienceStateQuery, getCurrency, resolveCountries, resolveLanguages } from "./builders";
-import type { PlanDraft } from "./engine";
+import type { PlanDraft, PreStep } from "./engine";
 
 export const DG_CHANNELS = ["DISCOVER", "GMAIL", "DISPLAY", "YOUTUBE_IN_FEED", "YOUTUBE_IN_STREAM", "YOUTUBE_SHORTS", "MAPS"] as const;
 export type DgChannel = (typeof DG_CHANNELS)[number];
@@ -146,6 +146,16 @@ export async function buildDemandGenPlan(
 	const reuse = input.reuse_assets_from_campaign_id ? await getCampaignAssets(client, cid, input.reuse_assets_from_campaign_id) : undefined;
 	if (reuse) summary.push(`Assets reutilizados de "${reuse.campaign.name}" (${reuse.campaign.id}, ${reuse.campaign.type})`);
 	const pick = (ft: string, n: number, filter: (a: Json) => boolean = () => true) => (reuse?.byFieldType[ft] ?? []).filter(filter).slice(0, n);
+	// Requisitos de DemandGenMultiAssetAdInfo (discovery v25): proporción ±1 % y tamaño mínimo. Un asset válido en
+	// PMax puede no serlo aquí (p. ej. un logo no cuadrado), así que al reutilizar se filtra si la API da dimensiones.
+	const skipped: string[] = [];
+	const fits = (ratio: number, minW: number, minH: number) => (a: Json) => {
+		if (!a.width || !a.height) return true;
+		const ok = Math.abs(a.width / a.height - ratio) <= ratio * 0.01 && a.width >= minW && a.height >= minH;
+		if (!ok) skipped.push(`${a.resourceName} (${a.width}x${a.height})`);
+		return ok;
+	};
+	const pickImg = (ft: string, ratio: number, minW: number, minH: number) => pick(ft, 5, fits(ratio, minW, minH)).map((a) => a.resourceName);
 
 	// ---------- presupuesto
 	const budgetMicros = toMicros(input.daily_budget);
@@ -199,12 +209,15 @@ export async function buildDemandGenPlan(
 	}
 
 	// ---------- segmentos personalizados nuevos
+	// CustomAudienceService no forma parte de GoogleAdsService.Mutate: los segmentos nuevos son pasos previos
+	// del plan y las operaciones principales los referencian por un placeholder que apply_plan sustituye.
+	const preSteps: PreStep[] = [];
 	const audienceByKey = new Map<string, string>();
 	for (const ca of input.new_custom_audiences ?? []) {
 		await assertCustomAudienceNameFree(client, cid, ca.name);
 		const caRn = rn("customAudiences", nextTmp());
-		const body = customAudienceBody(ca.name, ca.search_terms, ca.urls ?? [], caRn);
-		ops.push({ customAudienceOperation: { create: body } });
+		const body = customAudienceBody(ca.name, ca.search_terms, ca.urls ?? []);
+		preSteps.push({ service: "customAudiences", placeholder: caRn, operation: { create: body } });
 		audienceByKey.set(ca.key, caRn);
 		stateQueries.push(customAudienceStateQuery(ca.name));
 		summary.push(`(no existe) → Segmento personalizado "${ca.name}" (${body.type}): ${body.members.map((m: Json) => m.keyword ?? m.url).join(" | ")}`);
@@ -275,13 +288,13 @@ export async function buildDemandGenPlan(
 			const descriptions = ad.descriptions?.length ? ad.descriptions : pick("DESCRIPTION", 5, (a) => (a.text ?? "").length <= 90).map((a) => a.text!);
 			const businessName = ad.business_name ?? pick("BUSINESS_NAME", 1)[0]?.text;
 			const imgs: Record<ImageKind, string[]> = {
-				LOGO: ad.logo_assets?.length ? ad.logo_assets : pick("LOGO", 5).map((a) => a.resourceName),
-				MARKETING: ad.marketing_image_assets?.length ? ad.marketing_image_assets : pick("MARKETING_IMAGE", 5).map((a) => a.resourceName),
-				SQUARE: ad.square_marketing_image_assets?.length ? ad.square_marketing_image_assets : pick("SQUARE_MARKETING_IMAGE", 5).map((a) => a.resourceName),
-				PORTRAIT: ad.portrait_marketing_image_assets?.length ? ad.portrait_marketing_image_assets : pick("PORTRAIT_MARKETING_IMAGE", 5).map((a) => a.resourceName),
+				LOGO: ad.logo_assets?.length ? ad.logo_assets : pickImg("LOGO", 1, 128, 128),
+				MARKETING: ad.marketing_image_assets?.length ? ad.marketing_image_assets : pickImg("MARKETING_IMAGE", 1.91, 600, 314),
+				SQUARE: ad.square_marketing_image_assets?.length ? ad.square_marketing_image_assets : pickImg("SQUARE_MARKETING_IMAGE", 1, 300, 300),
+				PORTRAIT: ad.portrait_marketing_image_assets?.length ? ad.portrait_marketing_image_assets : pickImg("PORTRAIT_MARKETING_IMAGE", 0.8, 480, 600),
 				TALL_PORTRAIT: ad.tall_portrait_marketing_image_assets?.length
 					? ad.tall_portrait_marketing_image_assets
-					: pick("TALL_PORTRAIT_MARKETING_IMAGE", 5).map((a) => a.resourceName),
+					: pickImg("TALL_PORTRAIT_MARKETING_IMAGE", 0.5625, 600, 1067),
 			};
 			for (const img of ad.image_urls ?? []) {
 				const assetRn = rn("assets", nextTmp());
@@ -332,5 +345,6 @@ export async function buildDemandGenPlan(
 		}
 	}
 
-	return { kind: "create_demand_gen_campaign", customerId: cid, summary, warnings, operations: ops, stateQueries };
+	if (skipped.length) warnings.push(`Assets del PMax descartados por proporción o tamaño no válidos para Demand Gen: ${[...new Set(skipped)].join(", ")}`);
+	return { kind: "create_demand_gen_campaign", customerId: cid, summary, warnings, operations: ops, stateQueries, preSteps };
 }

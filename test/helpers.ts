@@ -33,6 +33,8 @@ export class FakeAds {
 	searches: SearchHandler[] = [];
 	queries: string[] = [];
 	mutateCalls: { customerId: string; body: Json }[] = [];
+	serviceCalls: { service: string; body: Json }[] = [];
+	serviceError?: { status: number; body: Json };
 	mutateError?: { status: number; body: Json };
 	mutateResponse: Json = { mutateOperationResponses: [] };
 	tokenCalls = 0;
@@ -49,9 +51,16 @@ export class FakeAds {
 			return Response.json({ access_token: "tok", expires_in: 3600 });
 		}
 		this.lastHeaders = init?.headers as Record<string, string>;
+		const body = JSON.parse(String(init?.body ?? "{}"));
+		const svc = url.match(/customers\/(\d+)\/(customAudiences):mutate$/);
+		if (svc) {
+			this.serviceCalls.push({ service: svc[2], body });
+			if (this.serviceError) return Response.json(this.serviceError.body, { status: this.serviceError.status });
+			if (body.validateOnly) return Response.json({});
+			return Response.json({ results: body.operations.map((_: Json, i: number) => ({ resourceName: `customers/${svc[1]}/customAudiences/${900 + i}` })) });
+		}
 		const m = url.match(/customers\/(\d+)\/googleAds:(search|mutate)$/);
 		if (!m) return new Response("not found", { status: 404 });
-		const body = JSON.parse(String(init?.body ?? "{}"));
 		if (m[2] === "search") {
 			this.queries.push(body.query);
 			const h = this.searches.find((s) => s.match.test(body.query));

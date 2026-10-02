@@ -90,11 +90,14 @@ describe("plan Demand Gen", () => {
 		expect(crits.filter((c) => c.adGroup === ags[0].create.resourceName && c.location).map((c) => c.location.geoTargetConstant)).toEqual(["geoTargetConstants/2784"]);
 		expect(crits.filter((c) => c.adGroup === ags[1].create.resourceName && c.location).map((c) => c.location.geoTargetConstant)).toEqual(["geoTargetConstants/2702"]);
 		expect(crits.filter((c) => c.language)).toHaveLength(2);
-		// Custom audience nueva (SEARCH) referenciada por ID temporal
-		const [ca] = ofKind(ops, "customAudienceOperation");
-		expect(ca.create.type).toBe("SEARCH");
-		expect(ca.create.members).toHaveLength(4);
-		expect(crits.filter((c) => c.customAudience?.customAudience === ca.create.resourceName)).toHaveLength(2);
+		// Custom audience nueva (SEARCH): paso previo en CustomAudienceService, referenciada por placeholder
+		expect(ofKind(ops, "customAudienceOperation")).toHaveLength(0);
+		const [pre] = d.preSteps!;
+		expect(pre.service).toBe("customAudiences");
+		expect(pre.operation.create.type).toBe("SEARCH");
+		expect(pre.operation.create.members).toHaveLength(4);
+		expect(pre.operation.create.resourceName).toBeUndefined();
+		expect(crits.filter((c) => c.customAudience?.customAudience === pre.placeholder)).toHaveLength(2);
 		// Ningún campo de campaña de nivel campaña de ubicación (upgraded targeting)
 		expect(ofKind(ops, "campaignCriterionOperation")).toHaveLength(0);
 		// Anuncio multi-imagen con assets reutilizados del PMax
@@ -112,16 +115,52 @@ describe("plan Demand Gen", () => {
 		const idx = (k: string) => ops.findIndex((o) => o[k]);
 		expect(idx("campaignBudgetOperation")).toBeLessThan(idx("campaignOperation"));
 		expect(idx("campaignOperation")).toBeLessThan(idx("adGroupOperation"));
-		expect(idx("customAudienceOperation")).toBeLessThan(idx("adGroupCriterionOperation"));
 		expect(d.warnings?.join()).toMatch(/ENGAGEMENT\/YOUTUBE_HOSTED/);
 	});
 
 	it("pasa las barreras y valida con validateOnly", async () => {
 		const { ads, client, deps } = setup();
 		seed(ads);
+		ads.on(/FROM custom_audience WHERE custom_audience.status/, [{ customAudience: { resourceName: `customers/${CID}/customAudiences/555` } }]);
 		const r = await createPlan(deps, await buildDemandGenPlan(client, CID, INPUT, "CUSTOM_AUDIENCE_CRITERION"));
 		expect(r.ok).toBe(true);
+		// Segmento validado en su servicio; campaña validada sustituyendo el placeholder por uno existente
+		expect(ads.serviceCalls).toHaveLength(1);
+		expect(ads.serviceCalls[0].body.validateOnly).toBe(true);
 		expect(ads.mutateCalls[0].body.validateOnly).toBe(true);
+		const sent = JSON.stringify(ads.mutateCalls[0].body.mutateOperations);
+		expect(sent).toContain(`customers/${CID}/customAudiences/555`);
+		expect(sent).not.toContain("customAudienceOperation");
+	});
+
+	it("apply: crea primero el segmento y usa su resource name real en la campaña", async () => {
+		const { ads, client, deps } = setup();
+		seed(ads);
+		const { applyPlan, getAuditLog } = await import("../src/plans/engine");
+		const r = await createPlan(deps, await buildDemandGenPlan(client, CID, INPUT, "CUSTOM_AUDIENCE_CRITERION"));
+		if (!r.ok) throw new Error(r.message);
+		ads.mutateResponse = { mutateOperationResponses: [{ campaignResult: { resourceName: `customers/${CID}/campaigns/1` } }] };
+		const a = await applyPlan(deps, r.plan_id, `APPLY ${r.plan_id}`);
+		expect(a.ok).toBe(true);
+		const real = ads.serviceCalls.at(-1)!;
+		expect(real.body.validateOnly).toBe(false);
+		const main = ads.mutateCalls.at(-1)!.body;
+		expect(main.validateOnly).toBe(false);
+		const txt = JSON.stringify(main.mutateOperations);
+		expect(txt).toContain(`customers/${CID}/customAudiences/900`);
+		expect(txt).not.toMatch(/customAudiences\/-\d/);
+		const [log] = await getAuditLog(deps.kv, 1);
+		expect(log.resource_names).toEqual([`customers/${CID}/customAudiences/900`, `customers/${CID}/campaigns/1`]);
+	});
+
+	it("sin custom audience previo en la cuenta: valida el resto y avisa", async () => {
+		const { ads, client, deps } = setup();
+		seed(ads);
+		const r = await createPlan(deps, await buildDemandGenPlan(client, CID, INPUT, "CUSTOM_AUDIENCE_CRITERION"));
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.warnings.join()).toMatch(/Validación parcial/);
+		expect(JSON.stringify(ads.mutateCalls[0].body.mutateOperations)).not.toMatch(/customAudiences\/-\d/);
 	});
 
 	it("modo AUDIENCE_RESOURCE: crea un Audience con el segmento y lo asigna al grupo", async () => {
@@ -130,8 +169,7 @@ describe("plan Demand Gen", () => {
 		const d = await buildDemandGenPlan(client, CID, INPUT, "AUDIENCE_RESOURCE");
 		const auds = ofKind(d.operations, "audienceOperation");
 		expect(auds).toHaveLength(2);
-		const [ca] = ofKind(d.operations, "customAudienceOperation");
-		expect(auds[0].create.dimensions[0].audienceSegments.segments[0]).toEqual({ customAudience: { customAudience: ca.create.resourceName } });
+		expect(auds[0].create.dimensions[0].audienceSegments.segments[0]).toEqual({ customAudience: { customAudience: d.preSteps![0].placeholder } });
 		const crits = ofKind(d.operations, "adGroupCriterionOperation").map((c) => c.create);
 		expect(crits.filter((c) => c.audience)).toHaveLength(2);
 		expect(crits.filter((c) => c.customAudience)).toHaveLength(0);
@@ -164,6 +202,20 @@ describe("plan Demand Gen", () => {
 		const d = await buildDemandGenPlan(client, CID, { ...INPUT, bidding_strategy: "MAXIMIZE_CLICKS", new_custom_audiences: [], ad_groups: [{ ...INPUT.ad_groups[1], custom_audience_keys: [] }] }, "CUSTOM_AUDIENCE_CRITERION");
 		expect(ofKind(d.operations, "campaignOperation")[0].create.targetSpend).toEqual({});
 		await expect(buildDemandGenPlan(client, CID, { ...INPUT, channels: ["TIKTOK" as any] }, "CUSTOM_AUDIENCE_CRITERION")).rejects.toThrow(/Canal desconocido/);
+	});
+
+	it("descarta imágenes del PMax que no cumplen proporción/tamaño de Demand Gen (logo 32x32)", async () => {
+		const { ads, client } = setup();
+		seed(ads);
+		ads.on(/FROM campaign_asset/, [
+			{ campaignAsset: { fieldType: "LOGO" }, asset: { resourceName: A("20"), type: "IMAGE", imageAsset: { fullSize: { widthPixels: 512, heightPixels: 512 } } } },
+			{ campaignAsset: { fieldType: "LOGO" }, asset: { resourceName: A("22"), type: "IMAGE", imageAsset: { fullSize: { widthPixels: 32, heightPixels: 32 } } } },
+			{ campaignAsset: { fieldType: "BUSINESS_NAME" }, asset: { resourceName: A("21"), type: "TEXT", textAsset: { text: "Neurored" } } },
+		]);
+		const d = await buildDemandGenPlan(client, CID, INPUT, "AUDIENCE_RESOURCE");
+		const [ad] = ofKind(d.operations, "adGroupAdOperation");
+		expect(ad.create.ad.demandGenMultiAssetAd.logoImages).toEqual([{ asset: A("20") }]);
+		expect(d.warnings?.join()).toContain(`${A("22")} (32x32)`);
 	});
 
 	it("anuncio incompleto (sin logo) falla antes de llamar a la API", async () => {
