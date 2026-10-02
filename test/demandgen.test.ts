@@ -115,7 +115,48 @@ describe("plan Demand Gen", () => {
 		const idx = (k: string) => ops.findIndex((o) => o[k]);
 		expect(idx("campaignBudgetOperation")).toBeLessThan(idx("campaignOperation"));
 		expect(idx("campaignOperation")).toBeLessThan(idx("adGroupOperation"));
+		// Por defecto solo optimiza hacia el lead: el resto de objetivos de cuenta quedan no biddable en la campaña
+		const goals = ofKind(ops, "campaignConversionGoalOperation").map((g) => g.update);
+		expect(goals.find((g) => g.resourceName.endsWith("~SUBMIT_LEAD_FORM~WEBSITE")).biddable).toBe(true);
+		expect(goals.find((g) => g.resourceName.endsWith("~ENGAGEMENT~YOUTUBE_HOSTED")).biddable).toBe(false);
+		expect(d.warnings?.join() ?? "").not.toMatch(/ENGAGEMENT/);
+		// Segmentación optimizada fijada explícitamente
+		for (const ag of ags) expect(ag.create.optimizedTargetingEnabled).toBe(false);
+		expect(d.summary.join("\n")).toMatch(/Segmentación optimizada: desactivada/);
+	});
+
+	it("restrict_to_conversion_goal=false usa los objetivos de cuenta y avisa de los de YouTube", async () => {
+		const { ads, client } = setup();
+		seed(ads);
+		const d = await buildDemandGenPlan(client, CID, { ...INPUT, restrict_to_conversion_goal: false }, "CUSTOM_AUDIENCE_CRITERION");
+		expect(ofKind(d.operations, "campaignConversionGoalOperation")).toHaveLength(0);
 		expect(d.warnings?.join()).toMatch(/ENGAGEMENT\/YOUTUBE_HOSTED/);
+	});
+
+	it("rellena {_campaignname} de las plantillas de la cuenta y exige el resto de parámetros", async () => {
+		const { ads, client } = setup();
+		seed(ads);
+		ads.on(/customer.final_url_suffix FROM customer$/, [
+			{ customer: { trackingUrlTemplate: "https://t.example/?u={lpurl}&src={_source}", finalUrlSuffix: "utm_campaign={_campaignname}&utm_content={_adgroupname}" } },
+		]);
+		await expect(buildDemandGenPlan(client, CID, INPUT, "CUSTOM_AUDIENCE_CRITERION")).rejects.toThrow(/\{_source\}/);
+		const d = await buildDemandGenPlan(client, CID, { ...INPUT, url_custom_parameters: { source: "dg" } }, "CUSTOM_AUDIENCE_CRITERION");
+		const [camp] = ofKind(d.operations, "campaignOperation");
+		expect(camp.create.urlCustomParameters).toEqual([
+			{ key: "source", value: "dg" },
+			{ key: "campaignname", value: INPUT.name },
+		]);
+		expect(d.summary.join("\n")).toMatch(/\{_campaignname\}=TEST_MCP_DemandGen_Discover/);
+		// {_adgroupname} va en cada grupo con su nombre, no en la campaña
+		const ags = ofKind(d.operations, "adGroupOperation");
+		expect(ags.map((g) => g.create.urlCustomParameters)).toEqual([[{ key: "adgroupname", value: "UAE" }], [{ key: "adgroupname", value: "SG" }]]);
+	});
+
+	it("optimized_targeting=true lo activa en todos los grupos", async () => {
+		const { ads, client } = setup();
+		seed(ads);
+		const d = await buildDemandGenPlan(client, CID, { ...INPUT, optimized_targeting: true }, "CUSTOM_AUDIENCE_CRITERION");
+		for (const ag of ofKind(d.operations, "adGroupOperation")) expect(ag.create.optimizedTargetingEnabled).toBe(true);
 	});
 
 	it("pasa las barreras y valida con validateOnly", async () => {

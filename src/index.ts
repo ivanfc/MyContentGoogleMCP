@@ -3,6 +3,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import { GoogleAdsClient, GoogleAdsApiError } from "./ads/client";
+import { OMITTED_NOTE, omittedFields } from "./ads/gaql";
 import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
 import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId } from "./config";
 import { describeOperation, listOperations, loadDiscovery } from "./ads/schema";
@@ -98,13 +99,19 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 
 		this.tool(
 			"gaql_search",
-			`Ejecuta una consulta GAQL libre (solo lectura) con paginación automática. Importes en micros (divide entre 1.000.000). Ej: query="SELECT campaign.id, campaign.name, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS". max_rows por defecto ${DEFAULT_MAX_ROWS}, máximo ${HARD_MAX_ROWS}.`,
+			`Ejecuta una consulta GAQL libre (solo lectura) con paginación automática. Importes en micros (divide entre 1.000.000). OJO: la API omite en la respuesta los campos con valor por defecto (false, 0, "", UNSPECIFIED); la respuesta lista en omitted_fields los campos pedidos que faltan (ausente = valor por defecto o no definido, NO "sin dato"). Para filtrar booleanos falsos usa != TRUE (= FALSE puede no devolver filas). change_event exige acotar change_event.change_date_time por los dos lados. Ej: query="SELECT campaign.id, campaign.name, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS". max_rows por defecto ${DEFAULT_MAX_ROWS}, máximo ${HARD_MAX_ROWS}.`,
 			{ customer_id: customerId, query: z.string().describe("Consulta GAQL"), max_rows: z.number().int().min(1).max(HARD_MAX_ROWS).optional() },
 			async ({ customer_id, query, max_rows }) => {
 				const { client, limits } = this.services();
 				const cid = await assertReadable(client, limits, customer_id);
 				const { rows, truncated } = await client.search(cid, query, max_rows ?? DEFAULT_MAX_ROWS);
-				return { row_count: rows.length, truncated, rows };
+				const omitted = omittedFields(query, rows);
+				return {
+					row_count: rows.length,
+					truncated,
+					...(Object.keys(omitted).length ? { omitted_fields: omitted, omitted_note: OMITTED_NOTE } : {}),
+					rows,
+				};
 			},
 		);
 
@@ -333,7 +340,15 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				bidding_strategy: z.enum(["MAXIMIZE_CONVERSIONS", "MAXIMIZE_CLICKS"]),
 				target_cpa: z.number().positive().optional(),
 				conversion_goal_category: z.string().optional().describe("Categoría de objetivo existente, p. ej. SUBMIT_LEAD_FORM"),
-				restrict_to_conversion_goal: z.boolean().default(false).describe("Experimental: hace biddable a nivel de campaña SOLO esa categoría"),
+				restrict_to_conversion_goal: z
+					.boolean()
+					.default(true)
+					.describe("Por defecto true: la campaña solo optimiza hacia esa categoría. false = usa todos los objetivos biddable de la cuenta (pueden incluir interacciones o visualizaciones de YouTube)"),
+				optimized_targeting: z.boolean().default(false).describe("Segmentación optimizada de los grupos. Por defecto false (se fija explícitamente)"),
+				url_custom_parameters: z
+					.record(z.string(), z.string())
+					.optional()
+					.describe('Parámetros personalizados de URL de la campaña, p. ej. {"campaignname":"..."}. Si las plantillas de la cuenta usan {_campaignname} y no lo pasas, se rellena con el nombre de la campaña; otras claves {_x} son obligatorias'),
 				country_codes: z.array(z.string()).default([]).describe("Países por defecto para grupos sin country_codes propios"),
 				geo_target_type: z.enum(["PRESENCE", "PRESENCE_OR_INTEREST"]).default("PRESENCE"),
 				language_codes: z.array(z.string()).default([]).describe('Códigos de idioma, p. ej. ["en"]'),

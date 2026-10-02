@@ -162,6 +162,15 @@ export async function buildGeoTargetingPlan(
 	const c = await getCampaign(client, cid, campaignId);
 	const include = await resolveCountries(client, cid, params.include_country_codes ?? []);
 	const exclude = await resolveCountries(client, cid, params.exclude_country_codes ?? []);
+	if (c.channelType === "DEMAND_GEN" && (include.length || exclude.length)) {
+		const dg = await client.searchAll(cid, `SELECT campaign.demand_gen_campaign_settings.upgraded_targeting FROM campaign WHERE campaign.id = ${c.id}`);
+		if (dg[0]?.campaign?.demandGenCampaignSettings?.upgradedTargeting) {
+			// Verificado contra la API (Neurored, 02-10-2026): el criterio de ubicación de campaña falla con requestError.UNKNOWN.
+			throw new Error(
+				`La campaña Demand Gen "${c.name}" segmenta países e idiomas por grupo de anuncios (upgraded targeting): no admite ubicaciones a nivel de campaña. Usa plan_generic_mutate con adGroupCriterionOperation {create:{adGroup, location:{geoTargetConstant}}} en cada grupo. La opción de ubicación (geo_target_type) sí se puede cambiar aquí, sin países.`,
+			);
+		}
+	}
 	const overlap = include.filter((i) => exclude.some((e) => e.resourceName === i.resourceName));
 	if (overlap.length) throw new Error(`Un país no puede estar incluido y excluido a la vez: ${overlap.map((o) => o.countryCode).join(", ")}.`);
 
