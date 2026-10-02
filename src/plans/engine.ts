@@ -40,6 +40,10 @@ export interface Deps {
 	limits: Limits;
 	userEmail: string;
 	now?: () => number;
+	/** Reclama el plan en un cerrojo global (Durable Object). false = ya lo está aplicando o lo aplicó otro. */
+	claim?: (planId: string) => Promise<boolean>;
+	/** Re-comprueba al aplicar que la cuenta sigue siendo escribible (allowlist / pertenencia a la MCC). */
+	assertWritable?: (customerId: string) => Promise<void>;
 }
 
 export interface PlanDraft {
@@ -92,7 +96,9 @@ function stripVolatile(row: Json): Json {
 export async function computeStateHash(client: GoogleAdsClient, customerId: string, queries: string[]): Promise<string> {
 	const parts: string[] = [];
 	for (const q of queries) {
-		const rows = await client.searchAll(customerId, q);
+		const { rows, truncated } = await client.search(customerId, q);
+		// Un estado truncado haría el hash arbitrario (falsos "estado cambiado" o cambios no detectados).
+		if (truncated) throw new Error(`La lectura de estado devuelve más de 10.000 filas y no se puede comprobar de forma fiable: ${q.slice(0, 160)}… Divide el cambio en planes más pequeños.`);
 		parts.push(JSON.stringify(rows.map((r) => JSON.stringify(stripVolatile(r))).sort()));
 	}
 	return sha256(parts.join("\n"));
@@ -199,7 +205,10 @@ function guardCtx(deps: Deps, customerId: string, flags: Plan["guardFlags"]) {
 
 /** Fase 1: barreras → lectura de estado → validateOnly → guardar plan en KV (30 min). */
 export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResult> {
-	const warnings = draft.warnings ?? [];
+	const warnings = [...(draft.warnings ?? [])];
+	if (!draft.stateQueries.length && !draft.apiCall) {
+		warnings.push("Este plan no tiene lectura de estado previa (solo crea recursos): apply_plan no podrá detectar si la cuenta cambió entre medias. Revisa el resumen justo antes de aplicar.");
+	}
 	const flags = draft.guardFlags ?? {};
 	let elevated: string[];
 	try {
@@ -330,6 +339,13 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		if (e instanceof GuardError) return { ok: false, message: e.message };
 		throw e;
 	}
+	if (deps.assertWritable) {
+		try {
+			await deps.assertWritable(plan.customerId);
+		} catch (e) {
+			return { ok: false, message: `${(e as Error).message} No se ha aplicado nada.` };
+		}
+	}
 	const elevated = [...new Set([...(plan.elevated ?? []), ...elevatedNow])];
 	const expected = confirmPhrase(planId, elevated);
 	if (confirm !== expected) {
@@ -359,7 +375,11 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		};
 	}
 
-	// El plan es de un solo uso: se borra antes de ejecutar para que un reintento no duplique pasos previos.
+	// El plan es de un solo uso. KV no es atómico: el cerrojo global evita que dos apply_plan simultáneos lo ejecuten
+	// ambos; el borrado evita que un reintento posterior duplique pasos previos.
+	if (deps.claim && !(await deps.claim(planId))) {
+		return { ok: false, message: `El plan ${planId} ya se está aplicando o ya se aplicó. No se ha vuelto a ejecutar. Revisa get_audit_log.` };
+	}
 	await deps.kv.delete(`plan:${planId}`);
 	const created: string[] = [];
 	const responses: Json = {};
@@ -385,14 +405,33 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 			responses.googleAds = response;
 			created.push(...extractResourceNames(response));
 		}
-		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: responses, resource_names: created });
-		return { ok: true, plan_id: planId, applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0) + (plan.apiCall ? 1 : 0), resource_names: created, summary: plan.summary, response: plan.apiCall ? responses.apiCall : undefined };
 	} catch (e) {
 		const error = e instanceof GoogleAdsApiError ? e.toJSON() : String(e);
-		await writeAudit(deps, { ...base, outcome: "FAILED", error, api_response: responses, resource_names: created });
+		let auditWarning = "";
+		try {
+			await writeAudit(deps, { ...base, outcome: "FAILED", error, api_response: responses, resource_names: created });
+		} catch (ae) {
+			auditWarning = ` (No se pudo escribir la auditoría: ${(ae as Error).message})`;
+		}
 		const partial = created.length ? ` Atención: ya se habían creado ${created.join(", ")} (pasos previos); la operación principal no se aplicó.` : "";
-		return { ok: false, message: `${e instanceof Error ? e.message : String(e)}${partial}`, errors: error, created_before_failure: created };
+		return { ok: false, message: `${e instanceof Error ? e.message : String(e)}${partial}${auditWarning}`, errors: error, created_before_failure: created };
 	}
+	// Los cambios YA están aplicados: un fallo al auditar no puede convertirse en "no se aplicó".
+	const warnings: string[] = [];
+	try {
+		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: responses, resource_names: created });
+	} catch (ae) {
+		warnings.push(`Cambios APLICADOS, pero no se pudo escribir el registro de auditoría: ${(ae as Error).message}`);
+	}
+	return {
+		ok: true,
+		...(warnings.length ? { warnings } : {}),
+		plan_id: planId,
+		applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0) + (plan.apiCall ? 1 : 0),
+		resource_names: created,
+		summary: plan.summary,
+		response: plan.apiCall ? responses.apiCall : undefined,
+	};
 }
 
 export function money(micros: number | string | undefined, currency: string): string {

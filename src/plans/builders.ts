@@ -176,6 +176,8 @@ export async function buildCampaignBudgetPlan(
 		operations: [{ campaignBudgetOperation: { update: { resourceName: b.resourceName, amountMicros: String(next) }, updateMask: "amount_micros" } }],
 		stateQueries: [
 			`SELECT campaign_budget.resource_name, campaign_budget.amount_micros, campaign_budget.explicitly_shared, campaign_budget.reference_count FROM campaign_budget WHERE campaign_budget.resource_name = '${b.resourceName}'`,
+			// Si la campaña cambia de presupuesto entre el plan y el apply, no se toca el presupuesto antiguo.
+			`SELECT campaign.resource_name, campaign.campaign_budget FROM campaign WHERE campaign.id = ${row.campaign.id}`,
 		],
 		guardFlags: { allowSharedBudget },
 	};

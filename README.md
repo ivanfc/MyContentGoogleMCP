@@ -96,6 +96,11 @@ Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se pu
 5. **Auditoría** en `STATE_KV` (`audit:*`): fecha UTC, email, cuenta, plan, operaciones o llamada exactas, motivos de refuerzo aceptados, respuesta de la API, resource names y resultado (`APPLIED`, `FAILED`, `ABORTED_STATE_CHANGED`).
 6. **Errores completos**: código (`campaignBudgetError.X`), campo, índice de operación, valor, mensaje y `request-id`.
 
+Detalles adicionales:
+
+- **Aplicación de un plan**: se re-comprueba que la cuenta sigue siendo escribible (allowlist o pertenencia a la MCC); un cerrojo global (Durable Object `PlanLock`) impide que dos `apply_plan` simultáneos del mismo plan se ejecuten ambos; si la auditoría falla después de aplicar, la respuesta sigue diciendo que se aplicó (con aviso). Un plan cuya lectura de estado supera 10.000 filas se rechaza en lugar de comparar un subconjunto.
+- **Otras comprobaciones**: reasignar el presupuesto de una campaña pasa los mismos límites que cambiar su importe; en `plan_api_call`, borrar o editar custom audiences/interests exige `APPLY-ELEVATED` y los parámetros de ruta no admiten segmentos vacíos ni relativos (`..`). Con `ALLOWED_CUSTOMER_IDS="*"` la propia MCC también es escribible (vínculos y estructura de cuentas exigen `APPLY-ELEVATED`).
+
 Para volver a bloquear del todo una categoría: añádela a `HARD_BLOCKED_OPERATIONS` en `src/guards.ts` o a `HARD_BLOCKED_METHODS` en `src/plans/apicall.ts` (vacías por defecto).
 
 ## Puesta en marcha
@@ -108,7 +113,7 @@ Para volver a bloquear del todo una categoría: añádela a `HARD_BLOCKED_OPERAT
 
 ### Despliegue continuo con GitHub Actions (recomendado)
 
-`.github/workflows/deploy.yml`: en cada PR pasa type-check y tests; en cada push a `main` despliega el Worker y sincroniza sus secretos; con *Run workflow* (manual) además ejecuta la integración contra la cuenta real (solo lectura + `validateOnly`).
+`.github/workflows/deploy.yml`: en cada PR pasa type-check y tests; en cada push a `main` despliega el Worker y sincroniza sus secretos; con *Run workflow* (manual) además ejecuta la integración contra la cuenta real (solo lectura + `validateOnly`). `integration_scope=smoke` (por defecto) ejecuta solo `integration/real-account.test.ts` (unas decenas de operaciones); `full` añade la cobertura completa por tipo de campaña, que consume cientos de operaciones de la cuota diaria de la API (Basic Access: 15.000/día compartidas con el uso real). Lanza `full` solo cuando cambien los constructores de planes o las barreras.
 
 Secretos en GitHub → Settings → Environments → `production` (o Settings → Secrets and variables → Actions):
 `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.

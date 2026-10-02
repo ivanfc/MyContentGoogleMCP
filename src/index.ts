@@ -48,6 +48,8 @@ const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD 
 const PLAN_NOTE =
 	"Si el plan devuelve elevated (operaciones sensibles o destructivas), la confirmación es \"APPLY-ELEVATED <plan_id>\" y debes enseñar esos motivos al usuario antes de pedirle aprobación. NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 30 minutos.";
 
+export { PlanLock } from "./lock";
+
 export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" });
 
@@ -59,7 +61,16 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		}
 		const limits = getLimits(this.env);
 		const client = new GoogleAdsClient(this.env);
-		const deps: Deps = { client, kv: this.env.STATE_KV, limits, userEmail: this.props!.email };
+		const deps: Deps = {
+			client,
+			kv: this.env.STATE_KV,
+			limits,
+			userEmail: this.props!.email,
+			claim: (planId) => this.env.PLAN_LOCK.get(this.env.PLAN_LOCK.idFromName("global")).claim(planId),
+			assertWritable: async (cid) => {
+				await this.writable(cid);
+			},
+		};
 		return { limits, client, deps };
 	}
 
