@@ -1,5 +1,5 @@
 import { type GoogleAdsClient, type Json, assertDate, assertId } from "../ads/client";
-import { type Limits, fromMicros, normalizeCustomerId } from "../config";
+import { type Limits, fromMicros, isWriteAllowed, normalizeCustomerId } from "../config";
 
 let childCache: { ids: Set<string>; expiresAt: number } | undefined;
 
@@ -23,7 +23,7 @@ export async function listAccessibleCustomers(client: GoogleAdsClient, limits: L
 			manager: Boolean(c.manager),
 			status: c.status,
 			level: Number(c.level ?? 0),
-			write_allowed: limits.allowedCustomerIds.has(id),
+			write_allowed: isWriteAllowed(limits, id),
 		};
 	});
 	childCache = { ids: new Set(list.map((c) => c.customer_id)), expiresAt: Date.now() + 10 * 60_000 };

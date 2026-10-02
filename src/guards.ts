@@ -1,4 +1,4 @@
-import { type Limits, fromMicros } from "./config";
+import { type Limits, fromMicros, isWriteAllowed } from "./config";
 import type { Json } from "./ads/client";
 
 export class GuardError extends Error {
@@ -124,9 +124,9 @@ export async function enforceGuards(operations: Json[], ctx: GuardContext): Prom
 	const e: string[] = [];
 	const { limits, customerId } = ctx;
 
-	if (!limits.allowedCustomerIds.has(customerId)) {
+	if (!isWriteAllowed(limits, customerId)) {
 		throw new GuardError([
-			`La cuenta ${customerId} no está en ALLOWED_CUSTOMER_IDS (${[...limits.allowedCustomerIds].join(", ") || "vacía"}). No se permite escribir en ella.`,
+			`La cuenta ${customerId} no está en ALLOWED_CUSTOMER_IDS (${limits.allowAllUnderMcc ? "*" : [...limits.allowedCustomerIds].join(", ") || "vacía"}). No se permite escribir en ella.`,
 		]);
 	}
 	if (!Array.isArray(operations) || operations.length === 0) {

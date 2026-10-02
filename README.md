@@ -83,7 +83,7 @@ Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo 
 Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se puede hacer por el MCP**, con dos niveles de control.
 
 1. **Dos fases siempre**. Ningún `plan_*` escribe. El plan comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` (si el método lo admite) → guarda en `STATE_KV` 30 min. `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente lo guardado (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
-2. **Bloqueo duro (sin excepciones)**: escribir en cuentas fuera de `ALLOWED_CUSTOMER_IDS`, operaciones que referencian otra cuenta y operaciones mal formadas. La lectura se limita a la MCC y sus hijas.
+2. **Bloqueo duro (sin excepciones)**: escribir en cuentas fuera de `ALLOWED_CUSTOMER_IDS` (con `*`, cuentas que no cuelgan de la MCC), operaciones que referencian otra cuenta y operaciones mal formadas. La lectura se limita a la MCC y sus hijas.
 3. **Confirmación reforzada (`APPLY-ELEVATED <plan_id>`)**: el plan se crea y valida igual, pero lista los motivos y exige la frase reforzada. Aplica a:
    - borrados de campañas, grupos, anuncios, presupuestos, asset groups, listas, etiquetas, audiencias… y `status: REMOVED`;
    - activar campañas por el genérico y campañas nuevas que no se crean en `PAUSED`;
@@ -165,7 +165,9 @@ npx wrangler secret put GOOGLE_ADS_REFRESH_TOKEN   # o el que toque; efecto inme
 - `COOKIE_ENCRYPTION_KEY`: rotarlo invalida las cookies de "cliente aprobado" (los usuarios vuelven a ver el consentimiento). No invalida tokens MCP ya emitidos.
 
 ### Añadir cuentas a la allowlist
-Edita `ALLOWED_CUSTOMER_IDS` en `wrangler.jsonc` (separadas por comas, sin guiones) y `npx wrangler deploy`. La cuenta debe colgar de la MCC `GOOGLE_ADS_LOGIN_CUSTOMER_ID`. Para lectura no hace falta: basta con que esté bajo la MCC.
+Configuración actual: `ALLOWED_CUSTOMER_IDS="*"`, es decir, se puede escribir en **cualquier cuenta que cuelgue de la MCC** `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, incluidas las que se vinculen en el futuro (sin redesplegar). Antes de crear cada plan el servidor comprueba contra la API (`customer_client`, caché de 10 min) que la cuenta pertenece a la MCC; si no, la escritura se rechaza.
+
+Para restringir a una lista concreta, sustituye `*` por los IDs separados por comas, sin guiones (p. ej. `"8460514008,1234567890"`), y despliega. Se pueden combinar (`"*,8460514008"`), aunque con `*` la lista no añade nada.
 
 ### Añadir o quitar usuarios
 Edita `ALLOWED_EMAILS` y despliega. Quitar un email bloquea sus llamadas a herramientas de inmediato (se comprueba en cada llamada).
