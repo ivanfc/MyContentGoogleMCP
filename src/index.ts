@@ -21,6 +21,7 @@ import {
 import { DG_CHANNELS, type DemandGenInput, buildDemandGenPlan } from "./plans/demandgen";
 import { type Deps, type PlanDraft, applyPlan, cancelPlan, createPlan, getAuditLog } from "./plans/engine";
 import { buildGenericPlan } from "./plans/generic";
+import { accountHealthCheck } from "./tools/health";
 import { assertReadable, campaignDetail, campaignOverview, changeHistory, listAccessibleCustomers, networkBreakdown } from "./tools/read";
 
 type ToolResult = { content: { type: "text"; text: string }[]; isError?: boolean };
@@ -188,6 +189,16 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			async ({ customer_id, days }) => {
 				const { client, limits } = this.services();
 				return changeHistory(client, await assertReadable(client, limits, customer_id), days);
+			},
+		);
+
+		this.tool(
+			"account_health_check",
+			"Diagnóstico de SOLO LECTURA de una cuenta (unas 8 consultas): parámetros {_x} de seguimiento que faltan en campañas o grupos activos, negativas de campaña que bloquean keywords activas, objetivos de conversión de cuenta que no son leads ni ventas, campañas activas que no sirven con normalidad (primary_status y motivos), anuncios rechazados o limitados y grupos Demand Gen con segmentación optimizada. Úsalo antes y después de cambios importantes. Devuelve hallazgos ordenados por gravedad.",
+			{ customer_id: customerId },
+			async ({ customer_id }) => {
+				const { client, limits } = this.services();
+				return accountHealthCheck(client, await assertReadable(client, limits, customer_id));
 			},
 		);
 
