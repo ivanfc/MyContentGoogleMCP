@@ -22,7 +22,7 @@ param(
 # Continue: en Windows PowerShell 5.1, 'Stop' convierte cualquier línea de stderr de npx en error fatal.
 # Los fallos reales se comprueban con $LASTEXITCODE y throw.
 $ErrorActionPreference = 'Continue'
-$WorkerUrl = 'https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev'
+$WorkerUrl = 'https://googleads-mcp.mycontent.academy'
 $env:CLOUDFLARE_ACCOUNT_ID = 'c6ba6a99369e2c4ade1a5e7d5c855a45'
 $SecretNames = @(
 	'GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REFRESH_TOKEN',

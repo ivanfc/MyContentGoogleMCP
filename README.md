@@ -2,7 +2,7 @@
 
 Servidor MCP remoto (Cloudflare Workers) para **leer y modificar** cuentas de Google Ads desde Claude (claude.ai, Cowork y Claude Code), con barreras de seguridad pensadas para cuentas de clientes en producción.
 
-- Endpoint MCP: `https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/mcp` (Streamable HTTP) y `https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/sse` (legacy SSE).
+- Endpoint MCP: `https://googleads-mcp.mycontent.academy/mcp` (Streamable HTTP) y `https://googleads-mcp.mycontent.academy/sse` (legacy SSE).
 - Google Ads API **v25** por REST (`fetch`), fijada en `GOOGLE_ADS_API_VERSION` (`src/config.ts`).
 - Login OAuth 2.1 con Google; solo entran los emails de `ALLOWED_EMAILS`.
 - Toda escritura en dos fases: `plan_*` (lee estado + `validateOnly`) → `apply_plan` (confirmación literal + verificación de que nada ha cambiado + auditoría).
@@ -92,7 +92,7 @@ Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo 
 
 - **Acceso a la API (sin developer token)**: Google retiró los developer tokens el 09-09-2026. El nivel de acceso (test / Basic / Standard) lo tiene ahora el **proyecto de Google Cloud que emite el cliente OAuth** (Cloud Console → Google Ads API). Si la API devuelve `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`, ese proyecto solo tiene acceso de prueba y hay que solicitar Basic Access desde la consola. Si existe `GOOGLE_ADS_DEVELOPER_TOKEN` se envía como cabecera opcional (la API la ignora).
 - **Cliente OAuth para la API de Google Ads** (Google Cloud → APIs & Services → Credentials → *Web application*). Añade `https://developers.google.com/oauthplayground` como redirect URI. En [OAuth Playground](https://developers.google.com/oauthplayground) → ⚙ *Use your own OAuth credentials* → scope `https://www.googleapis.com/auth/adwords` → autoriza con la cuenta que tiene acceso a la MCC 2567236642 → *Exchange authorization code for tokens* → copia el **refresh token**. Si el proyecto OAuth está en modo *Testing*, el refresh token caduca a los 7 días: publícalo (*In production*).
-- **Cliente OAuth para el login del MCP** (puede ser el mismo): redirect URI `https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev.workers.dev/callback` (y `http://localhost:8788/callback` para `wrangler dev`). Scopes: `openid email profile`.
+- **Cliente OAuth para el login del MCP** (puede ser el mismo): redirect URI `https://googleads-mcp.mycontent.academy.workers.dev/callback` (y `http://localhost:8788/callback` para `wrangler dev`). Scopes: `openid email profile`.
 
 ### Despliegue continuo con GitHub Actions (recomendado)
 
@@ -101,6 +101,8 @@ Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo 
 Secretos en GitHub → Settings → Environments → `production` (o Settings → Secrets and variables → Actions):
 `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 Rotar un secreto = actualizarlo en GitHub y relanzar el workflow.
+
+`CLOUDFLARE_API_TOKEN`: plantilla *Edit Cloudflare Workers*, cuenta MyContent y, en *Zone Resources*, la zona `mycontent.academy` (hace falta para el dominio propio `googleads-mcp.mycontent.academy`).
 
 ### 2. Cloudflare (manual)
 
@@ -135,13 +137,13 @@ Tras el primer deploy, pon la URL en `PUBLIC_BASE_URL` (`wrangler.jsonc`, sin ba
 npm test                 # unitarias (fetch y KV simulados)
 npm run type-check
 npm run integration      # cuenta real: solo lectura + validateOnly (necesita los 4 secretos de Ads en el entorno)
-curl -i https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/mcp   # 401 con WWW-Authenticate → resource_metadata
-npx @modelcontextprotocol/inspector   # Transport: Streamable HTTP, URL https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/mcp → OAuth → tools/list
+curl -i https://googleads-mcp.mycontent.academy/mcp   # 401 con WWW-Authenticate → resource_metadata
+npx @modelcontextprotocol/inspector   # Transport: Streamable HTTP, URL https://googleads-mcp.mycontent.academy/mcp → OAuth → tools/list
 ```
 
 ### 4. Añadir el conector en claude.ai
 
-Settings → Connectors → *Add custom connector* → URL `https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/mcp` → *Connect* → pantalla de consentimiento del servidor → login con Google (`ivan@mycontent.agency`). Cualquier otro email recibe **403**. El conector queda disponible en claude.ai, Cowork y Claude Code (`claude mcp add --transport http google-ads https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev/mcp`).
+Settings → Connectors → *Add custom connector* → URL `https://googleads-mcp.mycontent.academy/mcp` → *Connect* → pantalla de consentimiento del servidor → login con Google (`ivan@mycontent.agency`). Cualquier otro email recibe **403**. El conector queda disponible en claude.ai, Cowork y Claude Code (`claude mcp add --transport http google-ads https://googleads-mcp.mycontent.academy/mcp`).
 
 ## Operación
 

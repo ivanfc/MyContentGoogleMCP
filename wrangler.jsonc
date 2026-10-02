@@ -25,8 +25,12 @@
 		"MAX_DAILY_BUDGET": "60",
 		"MAX_BUDGET_INCREASE_PCT": "100",
 		// URL pública del Worker (audiencia OAuth). Vacía = origen de la petición.
-		"PUBLIC_BASE_URL": "https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev"
+		"PUBLIC_BASE_URL": "https://googleads-mcp.mycontent.academy"
 	},
+	// Dominio propio (zona mycontent.academy en esta cuenta). Es la URL canónica y la audiencia OAuth;
+	// workers.dev se desactiva para que solo exista una URL válida.
+	"routes": [{ "pattern": "googleads-mcp.mycontent.academy", "custom_domain": true }],
+	"workers_dev": false,
 	"observability": { "enabled": true },
 	"dev": { "port": 8788 }
 }

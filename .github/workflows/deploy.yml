@@ -73,8 +73,13 @@ jobs:
       - name: Comprobar endpoint
         run: |
           set -euo pipefail
-          url="https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev"
-          code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/mcp" -H 'content-type: application/json' -d '{}')
+          url="https://googleads-mcp.mycontent.academy"
+          # El dominio propio puede tardar unos minutos en tener certificado tras el primer deploy.
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/mcp" -H 'content-type: application/json' -d '{}' || true)
+            [ "$code" = "401" ] && break
+            echo "intento $i: /mcp -> $code; reintento en 10 s"; sleep 10
+          done
           echo "/mcp sin token -> $code"; test "$code" = "401"
           curl -sf "$url/.well-known/oauth-protected-resource"; echo
 
