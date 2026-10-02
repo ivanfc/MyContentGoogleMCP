@@ -90,7 +90,9 @@ export async function buildGenericPlan(client: GoogleAdsClient, cid: string, ope
 		if (action === "remove") {
 			summary.push(`#${i} ${kind} REMOVE ${target} (estado actual ${JSON.stringify(before.status ?? "?")}) → eliminado`);
 		} else {
-			const changes = mask.map((m: string) => `${m}: ${JSON.stringify(getPath(before, m))} → ${JSON.stringify(getPath(op.update, m))}`);
+			// La API omite los valores por defecto (false, 0, "", listas vacías): ausente ≠ desconocido.
+			const show = (v: unknown) => (v === undefined ? "(vacío / valor por defecto)" : JSON.stringify(v));
+			const changes = mask.map((m: string) => `${m}: ${show(getPath(before, m))} → ${show(getPath(op.update, m))}`);
 			summary.push(`#${i} ${kind} UPDATE ${target}: ${changes.join("; ") || "(sin updateMask)"}`);
 			if (!mask.length) warnings.push(`#${i}: update sin updateMask.`);
 		}
