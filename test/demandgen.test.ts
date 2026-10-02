@@ -137,7 +137,7 @@ describe("plan Demand Gen", () => {
 		const { ads, client } = setup();
 		seed(ads);
 		ads.on(/customer.final_url_suffix FROM customer$/, [
-			{ customer: { trackingUrlTemplate: "https://t.example/?u={lpurl}&src={_source}", finalUrlSuffix: "utm_campaign={_campaignname}" } },
+			{ customer: { trackingUrlTemplate: "https://t.example/?u={lpurl}&src={_source}", finalUrlSuffix: "utm_campaign={_campaignname}&utm_content={_adgroupname}" } },
 		]);
 		await expect(buildDemandGenPlan(client, CID, INPUT, "CUSTOM_AUDIENCE_CRITERION")).rejects.toThrow(/\{_source\}/);
 		const d = await buildDemandGenPlan(client, CID, { ...INPUT, url_custom_parameters: { source: "dg" } }, "CUSTOM_AUDIENCE_CRITERION");
@@ -147,6 +147,9 @@ describe("plan Demand Gen", () => {
 			{ key: "campaignname", value: INPUT.name },
 		]);
 		expect(d.summary.join("\n")).toMatch(/\{_campaignname\}=TEST_MCP_DemandGen_Discover/);
+		// {_adgroupname} va en cada grupo con su nombre, no en la campaña
+		const ags = ofKind(d.operations, "adGroupOperation");
+		expect(ags.map((g) => g.create.urlCustomParameters)).toEqual([[{ key: "adgroupname", value: "UAE" }], [{ key: "adgroupname", value: "SG" }]]);
 	});
 
 	it("optimized_targeting=true lo activa en todos los grupos", async () => {

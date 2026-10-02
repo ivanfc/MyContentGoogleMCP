@@ -169,8 +169,10 @@ export async function buildDemandGenPlan(
 	const requiredKeys = [...new Set([...`${tpl.trackingUrlTemplate ?? ""} ${tpl.finalUrlSuffix ?? ""}`.matchAll(/\{_([A-Za-z0-9]+)\}/g)].map((m) => m[1]))];
 	const urlParams: Record<string, string> = { ...(input.url_custom_parameters ?? {}) };
 	const missingKeys: string[] = [];
+	// {_adgroupname} va en cada grupo de anuncios (su propio nombre); el resto, en la campaña.
+	const adGroupNameKeys = requiredKeys.filter((k) => /^ad_?group_?name$/i.test(k) && urlParams[k] === undefined);
 	for (const k of requiredKeys) {
-		if (urlParams[k] !== undefined) continue;
+		if (urlParams[k] !== undefined || adGroupNameKeys.includes(k)) continue;
 		if (/^campaign_?name$/i.test(k)) urlParams[k] = input.name;
 		else missingKeys.push(k);
 	}
@@ -221,7 +223,7 @@ export async function buildDemandGenPlan(
 		`  Presupuesto diario: ${(budgetMicros / 1e6).toFixed(2)} ${currency} | Puja: ${input.bidding_strategy}${input.target_cpa ? ` (CPA objetivo ${input.target_cpa} ${currency})` : ""}`,
 		`  Opción de ubicación: ${input.geo_target_type} | Canales: ${input.channels.join(", ")} (resto desactivados)`,
 		`  Segmentación optimizada: ${input.optimized_targeting ? "ACTIVADA (Google amplía más allá de las audiencias)" : "desactivada (solo las audiencias indicadas)"}`,
-		`  Parámetros de URL: ${Object.entries(urlParams).map(([k, v]) => `{_${k}}=${v}`).join(", ") || "ninguno"}${requiredKeys.length ? ` (la cuenta usa ${requiredKeys.map((k) => `{_${k}}`).join(", ")})` : ""}`,
+		`  Parámetros de URL: ${[...Object.entries(urlParams).map(([k, v]) => `{_${k}}=${v}`), ...adGroupNameKeys.map((k) => `{_${k}}=<nombre de cada grupo>`)].join(", ") || "ninguno"}${requiredKeys.length ? ` (la cuenta usa ${requiredKeys.map((k) => `{_${k}}`).join(", ")})` : ""}`,
 	);
 
 	if (goalCategory && input.restrict_to_conversion_goal !== false) {
@@ -268,6 +270,7 @@ export async function buildDemandGenPlan(
 					status: "ENABLED",
 					demandGenAdGroupSettings: { channelControls: { selectedChannels } },
 					optimizedTargetingEnabled: input.optimized_targeting === true,
+					...(adGroupNameKeys.length ? { urlCustomParameters: adGroupNameKeys.map((key) => ({ key, value: ag.name })) } : {}),
 				},
 			},
 		});

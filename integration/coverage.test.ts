@@ -79,6 +79,14 @@ const EXPECTED_UNSUPPORTED = new Set([
 	"PERFORMANCE_MAX/bid modifier dispositivo",
 	"PERFORMANCE_MAX/puja: MAXIMIZE_CLICKS + CPC máx.",
 	"PERFORMANCE_MAX/puja: MANUAL_CPC",
+	// Demand Gen con upgraded targeting (verificado 02-10-2026 en la campaña Discover de Neurored).
+	"DEMAND_GEN/geo: excluir país + PRESENCE",
+	"DEMAND_GEN/idioma (criterio de campaña)",
+	"DEMAND_GEN/bid modifier dispositivo",
+	"DEMAND_GEN/puja: MAXIMIZE_CLICKS + CPC máx.",
+	"DEMAND_GEN/puja: MANUAL_CPC",
+	// tROAS: OPERATION_NOT_PERMITTED_FOR_CONTEXT en esta cuenta (sin valores de conversión); puede depender de la cuenta.
+	"DEMAND_GEN/puja: MAXIMIZE_CONVERSION_VALUE + tROAS",
 ]);
 
 async function check(type: string, change: string, tool: string, draftFn: () => Promise<PlanDraft>) {

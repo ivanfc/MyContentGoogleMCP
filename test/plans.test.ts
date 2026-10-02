@@ -206,6 +206,14 @@ describe("geo", () => {
 		ads.on(/FROM geo_target_constant/, []);
 		await expect(buildGeoTargetingPlan(client, CID, "7", { exclude_country_codes: ["ZZ"] })).rejects.toThrow(/ZZ/);
 	});
+
+	it("Demand Gen con upgraded targeting: rechaza países de campaña con un mensaje claro", async () => {
+		const { ads, client } = setup();
+		ads.on(/FROM campaign WHERE campaign.id = 9/, [{ campaign: { resourceName: `customers/${CID}/campaigns/9`, id: "9", name: "DG", status: "PAUSED", advertisingChannelType: "DEMAND_GEN" } }]);
+		ads.on(/upgraded_targeting FROM campaign/, [{ campaign: { demandGenCampaignSettings: { upgradedTargeting: true } } }]);
+		ads.on(/FROM geo_target_constant/, [{ geoTargetConstant: { resourceName: "geoTargetConstants/2352", countryCode: "IS", name: "Iceland" } }]);
+		await expect(buildGeoTargetingPlan(client, CID, "9", { exclude_country_codes: ["IS"] })).rejects.toThrow(/grupo de anuncios/);
+	});
 });
 
 describe("keywords negativas y placements", () => {

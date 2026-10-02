@@ -33,6 +33,11 @@ export class GoogleAdsApiError extends Error {
 			if (d.trigger) parts.push(`valor: ${d.trigger}`);
 			lines.push(parts.join(" | "));
 		}
+		if (details.some((d) => d.errorCode === "requestError.UNKNOWN")) {
+			lines.push(
+				'Pista: "requestError.UNKNOWN" significa que la API no tiene código para este error en esta versión. Suele ser un cambio que el tipo de campaña no admite: en Demand Gen con segmentación a nivel de grupo (upgraded targeting), países e idiomas van en el grupo de anuncios (adGroupCriterion), no en la campaña, y no hay ajustes de puja por dispositivo.',
+			);
+		}
 		return lines.join("\n");
 	}
 

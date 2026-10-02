@@ -57,6 +57,10 @@ export async function buildBiddingPlans(client: GoogleAdsClient, cid: string, ca
 		// Verificado contra la API: OPERATION_NOT_PERMITTED_FOR_CONTEXT.
 		throw new Error("Performance Max solo admite MAXIMIZE_CONVERSIONS (con o sin CPA objetivo) y MAXIMIZE_CONVERSION_VALUE (con o sin ROAS objetivo).");
 	}
+	if (row.advertisingChannelType === "DEMAND_GEN" && (input.strategy === "MANUAL_CPC" || (input.strategy === "MAXIMIZE_CLICKS" && input.max_cpc !== undefined))) {
+		// Verificado contra la API (Neurored, 02-10-2026): OPERATION_NOT_PERMITTED_FOR_CONTEXT.
+		throw new Error("Demand Gen no admite CPC manual ni MAXIMIZE_CLICKS con CPC máximo. Usa MAXIMIZE_CONVERSIONS (con o sin CPA objetivo) o MAXIMIZE_CLICKS sin max_cpc.");
+	}
 	const currency = await getCurrency(client, cid);
 	const curCpa = row.maximizeConversions?.targetCpaMicros ?? row.targetCpa?.targetCpaMicros;
 	const curRoas = row.maximizeConversionValue?.targetRoas ?? row.targetRoas?.targetRoas;
