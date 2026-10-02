@@ -175,12 +175,14 @@ describe("plan Demand Gen", () => {
 		expect(crits.filter((c) => c.customAudience)).toHaveLength(0);
 	});
 
-	it("presupuesto por encima del límite: bloqueado por barreras", async () => {
+	it("presupuesto por encima del límite: exige confirmación reforzada", async () => {
 		const { ads, client, deps } = setup();
 		seed(ads);
 		const r = await createPlan(deps, await buildDemandGenPlan(client, CID, { ...INPUT, daily_budget: 80 }, "CUSTOM_AUDIENCE_CRITERION"));
-		expect(r.ok).toBe(false);
-		expect(ads.mutateCalls).toHaveLength(0);
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.confirm_with).toBe(`APPLY-ELEVATED ${r.plan_id}`);
+		expect(r.elevated.join()).toMatch(/MAX_DAILY_BUDGET/);
 	});
 
 	it("falla con mensaje claro si el objetivo de conversión no existe", async () => {

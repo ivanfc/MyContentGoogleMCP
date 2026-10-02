@@ -1,4 +1,4 @@
-import { FORBIDDEN_OPERATIONS, ALLOWED_OPERATIONS, REMOVABLE_OPERATIONS } from "../guards";
+import { ELEVATED_OPERATIONS, REMOVABLE_OPERATIONS } from "../guards";
 import { GOOGLE_ADS_API_VERSION } from "../config";
 import type { FetchLike, Json } from "./client";
 
@@ -8,7 +8,7 @@ import type { FetchLike, Json } from "./client";
  * en lugar de inventarlos.
  */
 const DISCOVERY_URL = `https://googleads.googleapis.com/$discovery/rest?version=${GOOGLE_ADS_API_VERSION}`;
-const PREFIX = `GoogleAdsGoogleads${GOOGLE_ADS_API_VERSION.toUpperCase()}`;
+export const PREFIX = `GoogleAdsGoogleads${GOOGLE_ADS_API_VERSION.toUpperCase()}`;
 const KV_KEY = `discovery:${GOOGLE_ADS_API_VERSION}`;
 
 let memo: Json | undefined;
@@ -29,12 +29,11 @@ export function _resetDiscoveryMemo() {
 }
 
 function guardStatus(op: string): string {
-	if (FORBIDDEN_OPERATIONS[op]) return `PROHIBIDA (${FORBIDDEN_OPERATIONS[op]})`;
-	if (!ALLOWED_OPERATIONS.has(op)) return "NO PERMITIDA (fuera de la allowlist)";
-	return REMOVABLE_OPERATIONS.has(op) ? "permitida (create/update/remove)" : "permitida (create/update; sin remove)";
+	if (ELEVATED_OPERATIONS[op]) return `permitida con confirmación reforzada (${ELEVATED_OPERATIONS[op]})`;
+	return REMOVABLE_OPERATIONS.has(op) ? "permitida (remove incluido)" : "permitida (remove con confirmación reforzada)";
 }
 
-function schemaName(ref: string): string {
+export function schemaName(ref: string): string {
 	return ref.replace(PREFIX, "");
 }
 
@@ -46,7 +45,7 @@ export interface FieldInfo {
 	description: string;
 }
 
-function flatten(schemas: Json, ref: string, depth: number, prefix: string, out: FieldInfo[], seen: Set<string>) {
+export function flatten(schemas: Json, ref: string, depth: number, prefix: string, out: FieldInfo[], seen: Set<string>) {
 	const sc = schemas[ref];
 	if (!sc || seen.has(ref)) return;
 	seen.add(ref);
@@ -72,7 +71,8 @@ export function listOperations(discovery: Json) {
 	return Object.keys(props)
 		.sort()
 		.map((op) => ({ operation: op, guards: guardStatus(op) }))
-		.concat([{ operation: "customAudienceOperation", guards: "permitida vía plan_create_custom_audience (CustomAudienceService)" }]);
+		.concat([{ operation: "customAudienceOperation", guards: "permitida vía plan_create_custom_audience (CustomAudienceService)" }])
+		.concat([{ operation: "(otros servicios)", guards: "cualquier método de escritura de la API vía plan_api_call; ver describe_api_method" }]);
 }
 
 /** Campos modificables del recurso de una operación (p. ej. campaignOperation → Campaign). */

@@ -8,7 +8,8 @@ const budget = (amountMicros: number, shared = false, refs = 1) => async () => (
 const ctx = (over: Partial<Parameters<typeof enforceGuards>[1]> = {}) => ({ customerId: CID, limits, getBudget: budget(25_000_000), ...over });
 const BRN = `customers/${CID}/campaignBudgets/1`;
 
-async function violations(ops: any[], c = ctx()): Promise<string[]> {
+/** Bloqueos duros (GuardError). */
+async function hard(ops: any[], c = ctx()): Promise<string[]> {
 	try {
 		await enforceGuards(ops, c);
 		return [];
@@ -16,6 +17,11 @@ async function violations(ops: any[], c = ctx()): Promise<string[]> {
 		if (e instanceof GuardError) return e.violations;
 		throw e;
 	}
+}
+
+/** Motivos de confirmación reforzada (APPLY-ELEVATED). Falla si hay bloqueo duro. */
+async function violations(ops: any[], c = ctx()): Promise<string[]> {
+	return (await enforceGuards(ops, c)).elevated;
 }
 
 describe("conversión a micros", () => {
@@ -38,12 +44,12 @@ describe("conversión a micros", () => {
 
 describe("barreras", () => {
 	it("allowlist: rechaza cuentas fuera de ALLOWED_CUSTOMER_IDS", async () => {
-		const v = await violations([{ campaignOperation: { update: { resourceName: "customers/1111111111/campaigns/1", status: "PAUSED" }, updateMask: "status" } }], ctx({ customerId: "1111111111" }));
+		const v = await hard([{ campaignOperation: { update: { resourceName: "customers/1111111111/campaigns/1", status: "PAUSED" }, updateMask: "status" } }], ctx({ customerId: "1111111111" }));
 		expect(v[0]).toMatch(/ALLOWED_CUSTOMER_IDS/);
 	});
 
-	it("rechaza resource names de otra cuenta dentro de una cuenta permitida", async () => {
-		const v = await violations([{ campaignOperation: { update: { resourceName: "customers/1111111111/campaigns/1", status: "PAUSED" }, updateMask: "status" } }]);
+	it("rechaza resource names de otra cuenta dentro de una cuenta permitida (bloqueo duro)", async () => {
+		const v = await hard([{ campaignOperation: { update: { resourceName: "customers/1111111111/campaigns/1", status: "PAUSED" }, updateMask: "status" } }]);
 		expect(v.join()).toMatch(/otra cuenta/);
 	});
 
@@ -52,25 +58,36 @@ describe("barreras", () => {
 		["biddingStrategyOperation", /cartera/],
 		["customerOperation", /configuración de la cuenta/],
 		["customerConversionGoalOperation", /conversión/],
-	])("prohíbe %s", async (kind, re) => {
+	])("%s exige confirmación reforzada", async (kind, re) => {
 		const v = await violations([{ [kind]: { create: { name: "x" } } }]);
 		expect(v.join()).toMatch(re);
 	});
 
-	it("rechaza tipos de operación fuera de la allowlist", async () => {
-		const v = await violations([{ keywordPlanOperation: { create: {} } }]);
-		expect(v.join()).toMatch(/no está en la lista/);
+	it("configuración de la propia cuenta (customers/<id> sin sufijo): reforzada, no bloqueada", async () => {
+		const v = await violations([{ customerOperation: { update: { resourceName: `customers/${CID}`, autoTaggingEnabled: true }, updateMask: "auto_tagging_enabled" } }]);
+		expect(v.join()).toMatch(/configuración de la cuenta/);
+		expect(await hard([{ customerOperation: { update: { resourceName: "customers/1111111111", autoTaggingEnabled: true }, updateMask: "auto_tagging_enabled" } }])).not.toEqual([]);
 	});
 
-	it.each(["campaignOperation", "adGroupOperation", "adGroupAdOperation", "campaignBudgetOperation", "assetOperation"])("bloquea remove en %s", async (kind) => {
-		const v = await violations([{ [kind]: { remove: `customers/${CID}/x/1` } }]);
-		expect(v.join()).toMatch(/remove no permitido/);
+	it("cualquier tipo de operación de la API es posible; las no sensibles no exigen refuerzo", async () => {
+		expect(await violations([{ keywordPlanOperation: { create: {} } }])).toEqual([]);
+		expect(await violations([{ assetSetOperation: { create: { name: "x" } } }])).toEqual([]);
 	});
 
-	it("permite remove en criterios", async () => {
-		await expect(enforceGuards([{ campaignCriterionOperation: { remove: `customers/${CID}/campaignCriteria/1~2` } }], ctx())).resolves.toBeUndefined();
-		await expect(enforceGuards([{ customerNegativeCriterionOperation: { remove: `customers/${CID}/customerNegativeCriteria/2` } }], ctx())).resolves.toBeUndefined();
-	});
+	it.each(["campaignOperation", "adGroupOperation", "adGroupAdOperation", "campaignBudgetOperation", "assetGroupOperation", "sharedSetOperation", "userListOperation"])(
+		"remove en %s exige confirmación reforzada (borrado)",
+		async (kind) => {
+			const v = await violations([{ [kind]: { remove: `customers/${CID}/x/1` } }]);
+			expect(v.join()).toMatch(/BORRADO/);
+		},
+	);
+
+	it.each(["campaignCriterionOperation", "customerNegativeCriterionOperation", "assetGroupSignalOperation", "assetGroupAssetOperation", "campaignAssetOperation", "campaignSharedSetOperation", "campaignBidModifierOperation", "campaignLabelOperation"])(
+		"remove en %s (criterios, vínculos, señales, ajustes) es confirmación normal",
+		async (kind) => {
+			expect(await violations([{ [kind]: { remove: `customers/${CID}/x/1~2` } }])).toEqual([]);
+		},
+	);
 
 	it("bloquea status REMOVED vía update", async () => {
 		const v = await violations([{ adGroupOperation: { update: { resourceName: `customers/${CID}/adGroups/1`, status: "REMOVED" }, updateMask: "status" } }]);
@@ -84,9 +101,9 @@ describe("barreras", () => {
 		expect(v2.join()).toMatch(/PAUSED/);
 	});
 
-	it("activar campañas solo con el flag de plan_update_campaign_status", async () => {
+	it("activar campañas por el genérico exige refuerzo; con plan_update_campaign_status no", async () => {
 		const op = [{ campaignOperation: { update: { resourceName: `customers/${CID}/campaigns/1`, status: "ENABLED" }, updateMask: "status" } }];
-		expect((await violations(op)).join()).toMatch(/plan_update_campaign_status/);
+		expect((await violations(op)).join()).toMatch(/ACTIVA una campaña/);
 		expect(await violations(op, ctx({ allowCampaignEnable: true }))).toEqual([]);
 	});
 
@@ -124,9 +141,9 @@ describe("barreras", () => {
 		expect(v.join()).toMatch(/no se pudo leer/);
 	});
 
-	it("formato inválido", async () => {
-		expect((await violations([{ a: {}, b: {} }])).join()).toMatch(/exactamente una clave/);
-		expect((await violations([{ campaignOperation: { create: {}, update: {} } }])).join()).toMatch(/exactamente una acción/);
+	it("formato inválido (bloqueo duro)", async () => {
+		expect((await hard([{ a: {}, b: {} }])).join()).toMatch(/exactamente una clave/);
+		expect((await hard([{ campaignOperation: { create: {}, update: {} } }])).join()).toMatch(/exactamente una acción/);
 	});
 });
 

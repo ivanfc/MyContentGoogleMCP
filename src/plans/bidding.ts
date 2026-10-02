@@ -51,7 +51,7 @@ export async function buildBiddingPlans(client: GoogleAdsClient, cid: string, ca
 	const row = (await client.searchAll(cid, q))[0]?.campaign;
 	if (!row) throw new Error(`La campaña ${id} no existe en ${cid}.`);
 	if (row.biddingStrategy) {
-		throw new Error(`La campaña "${row.name}" usa una estrategia de cartera compartida (${row.biddingStrategy}). Tocar estrategias de cartera está prohibido por las barreras; cámbiala desde la UI.`);
+		throw new Error(`La campaña "${row.name}" usa una estrategia de cartera compartida (${row.biddingStrategy}). Para cambiarla usa plan_generic_mutate (exige APPLY-ELEVATED).`);
 	}
 	if (row.advertisingChannelType === "PERFORMANCE_MAX" && (input.strategy === "MAXIMIZE_CLICKS" || input.strategy === "MANUAL_CPC")) {
 		// Verificado contra la API: OPERATION_NOT_PERMITTED_FOR_CONTEXT.

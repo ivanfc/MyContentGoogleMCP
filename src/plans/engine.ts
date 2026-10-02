@@ -1,6 +1,7 @@
 import { GoogleAdsApiError, type GoogleAdsClient, type Json } from "../ads/client";
 import { type Limits, PLAN_TTL_SECONDS, fromMicros } from "../config";
 import { type BudgetInfo, GuardError, enforceGuards } from "../guards";
+import { type ApiCall, guardApiCall } from "./apicall";
 
 export interface Plan {
 	id: string;
@@ -16,6 +17,10 @@ export interface Plan {
 	stateHash: string;
 	guardFlags: { allowCampaignEnable?: boolean; allowSharedBudget?: boolean };
 	preSteps?: PreStep[];
+	/** Llamada a un método de la API fuera de GoogleAdsService.Mutate (plan_api_call). */
+	apiCall?: ApiCall;
+	/** Motivos de confirmación reforzada (vacío = "APPLY <id>"). */
+	elevated: string[];
 }
 
 /**
@@ -47,10 +52,23 @@ export interface PlanDraft {
 	stateQueries: string[];
 	guardFlags?: Plan["guardFlags"];
 	preSteps?: PreStep[];
+	apiCall?: ApiCall;
 }
 
 export type PlanResult =
-	| { ok: true; plan_id: string; expires_at_utc: string; confirm_with: string; kind: string; customer_id: string; summary: string[]; warnings: string[]; operations_count: number; validation: "OK (validateOnly)" }
+	| {
+			ok: true;
+			plan_id: string;
+			expires_at_utc: string;
+			confirm_with: string;
+			elevated: string[];
+			kind: string;
+			customer_id: string;
+			summary: string[];
+			warnings: string[];
+			operations_count: number;
+			validation: string;
+	  }
 	| { ok: false; stage: "guards" | "validation"; summary: string[]; warnings: string[]; errors: unknown; message: string };
 
 const now = (deps: Deps) => (deps.now ? deps.now() : Date.now());
@@ -91,6 +109,13 @@ export function budgetReader(client: GoogleAdsClient, customerId: string) {
 	};
 }
 
+export const confirmPhrase = (planId: string, elevated: string[]) => (elevated.length ? `APPLY-ELEVATED ${planId}` : `APPLY ${planId}`);
+
+async function runGuards(deps: Deps, d: { customerId: string; operations: Json[]; preSteps?: PreStep[]; apiCall?: ApiCall; guardFlags?: Plan["guardFlags"] }): Promise<string[]> {
+	if (d.apiCall) return guardApiCall(d.apiCall, d.customerId, deps.limits);
+	return (await enforceGuards(guardedOps(d.preSteps, d.operations), guardCtx(deps, d.customerId, d.guardFlags ?? {}))).elevated;
+}
+
 /** Operaciones que pasan por las barreras: pasos previos (en formato MutateOperation) + principales. */
 function guardedOps(preSteps: PreStep[] | undefined, operations: Json[]): Json[] {
 	return [...(preSteps ?? []).map((p) => ({ customAudienceOperation: p.operation })), ...operations];
@@ -129,6 +154,14 @@ function stripReferencing(operations: Json[], refs: string[]): { kept: Json[]; r
  * se omiten las operaciones que dependen de ellos y se avisa).
  */
 async function validate(deps: Deps, draft: PlanDraft, warnings: string[]) {
+	if (draft.apiCall) {
+		if (draft.apiCall.supportsValidateOnly) {
+			await deps.client.request(draft.apiCall.httpMethod, draft.apiCall.path, { ...draft.apiCall.body, validateOnly: true });
+		} else {
+			warnings.push(`El método ${draft.apiCall.methodId} no admite validateOnly: la API solo lo comprobará al aplicarlo.`);
+		}
+		return;
+	}
 	const pre = draft.preSteps ?? [];
 	if (pre.length) await deps.client.mutateService(draft.customerId, "customAudiences", pre.map((p) => p.operation), true);
 	if (!draft.operations.length) return;
@@ -166,8 +199,9 @@ function guardCtx(deps: Deps, customerId: string, flags: Plan["guardFlags"]) {
 export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResult> {
 	const warnings = draft.warnings ?? [];
 	const flags = draft.guardFlags ?? {};
+	let elevated: string[];
 	try {
-		await enforceGuards(guardedOps(draft.preSteps, draft.operations), guardCtx(deps, draft.customerId, flags));
+		elevated = await runGuards(deps, draft);
 	} catch (e) {
 		if (e instanceof GuardError) {
 			return { ok: false, stage: "guards", summary: draft.summary, warnings, errors: e.violations, message: e.message };
@@ -202,19 +236,22 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 		stateHash,
 		guardFlags: flags,
 		...(draft.preSteps?.length ? { preSteps: draft.preSteps } : {}),
+		...(draft.apiCall ? { apiCall: draft.apiCall } : {}),
+		elevated,
 	};
 	await deps.kv.put(`plan:${id}`, JSON.stringify(plan), { expirationTtl: PLAN_TTL_SECONDS });
 	return {
 		ok: true,
 		plan_id: id,
 		expires_at_utc: new Date(plan.expiresAt).toISOString(),
-		confirm_with: `APPLY ${id}`,
+		confirm_with: confirmPhrase(id, elevated),
+		elevated,
 		kind: plan.kind,
 		customer_id: plan.customerId,
 		summary: plan.summary,
 		warnings,
-		operations_count: plan.operations.length + (plan.preSteps?.length ?? 0),
-		validation: "OK (validateOnly)",
+		operations_count: plan.operations.length + (plan.preSteps?.length ?? 0) + (plan.apiCall ? 1 : 0),
+		validation: plan.apiCall && !plan.apiCall.supportsValidateOnly ? "sin validación previa (el método no la admite)" : "OK (validateOnly)",
 	};
 }
 
@@ -243,6 +280,8 @@ export interface AuditRecord {
 	plan_id: string;
 	kind: string;
 	outcome: "APPLIED" | "FAILED" | "ABORTED_STATE_CHANGED";
+	/** Motivos de confirmación reforzada aceptados en este apply. */
+	elevated?: string[];
 	summary: string[];
 	operations: Json[];
 	api_response?: Json;
@@ -281,16 +320,21 @@ function extractResourceNames(response: Json): string[] {
 export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 	const plan = await loadPlan(deps, planId);
 	if (!plan) return { ok: false, message: `El plan ${planId} no existe o ha caducado (30 min). Genera un plan nuevo.` };
-	if (confirm !== `APPLY ${planId}`) {
-		return { ok: false, message: `Confirmación incorrecta. Debe ser exactamente "APPLY ${planId}".` };
-	}
-
 	// Defensa en profundidad: las barreras se re-evalúan con el estado actual.
+	let elevatedNow: string[];
 	try {
-		await enforceGuards(guardedOps(plan.preSteps, plan.operations), guardCtx(deps, plan.customerId, plan.guardFlags));
+		elevatedNow = await runGuards(deps, plan);
 	} catch (e) {
 		if (e instanceof GuardError) return { ok: false, message: e.message };
 		throw e;
+	}
+	const elevated = [...new Set([...(plan.elevated ?? []), ...elevatedNow])];
+	const expected = confirmPhrase(planId, elevated);
+	if (confirm !== expected) {
+		return {
+			ok: false,
+			message: `Confirmación incorrecta. Debe ser exactamente "${expected}".${elevated.length ? ` Requiere confirmación reforzada por: ${elevated.join(" | ")}` : ""}`,
+		};
 	}
 
 	const currentHash = await computeStateHash(deps.client, plan.customerId, plan.stateQueries);
@@ -301,7 +345,8 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		plan_id: plan.id,
 		kind: plan.kind,
 		summary: plan.summary,
-		operations: guardedOps(plan.preSteps, plan.operations),
+		operations: plan.apiCall ? [{ apiCall: plan.apiCall }] : guardedOps(plan.preSteps, plan.operations),
+		elevated,
 	};
 	if (currentHash !== plan.stateHash) {
 		await deps.kv.delete(`plan:${planId}`);
@@ -327,6 +372,11 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 			});
 			if (map.size !== plan.preSteps.length) throw new Error("La API no devolvió todos los custom audiences creados.");
 		}
+		if (plan.apiCall) {
+			const res = await deps.client.request(plan.apiCall.httpMethod, plan.apiCall.path, plan.apiCall.body);
+			responses.apiCall = res;
+			for (const rn of JSON.stringify(res).match(/customers\/\d+\/[A-Za-z]+\/[\w~-]+/g) ?? []) if (!created.includes(rn)) created.push(rn);
+		}
 		if (plan.operations.length) {
 			const ops = map.size ? replacePlaceholders(plan.operations, map) : plan.operations;
 			const response = await deps.client.mutate(plan.customerId, ops, false);
@@ -334,7 +384,7 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 			created.push(...extractResourceNames(response));
 		}
 		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: responses, resource_names: created });
-		return { ok: true, plan_id: planId, applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0), resource_names: created, summary: plan.summary };
+		return { ok: true, plan_id: planId, applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0) + (plan.apiCall ? 1 : 0), resource_names: created, summary: plan.summary, response: plan.apiCall ? responses.apiCall : undefined };
 	} catch (e) {
 		const error = e instanceof GoogleAdsApiError ? e.toJSON() : String(e);
 		await writeAudit(deps, { ...base, outcome: "FAILED", error, api_response: responses, resource_names: created });

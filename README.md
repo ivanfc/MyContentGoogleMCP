@@ -44,6 +44,8 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `get_change_history(customer_id, days≤30)` | `change_event` |
 | `get_asset_group_assets(customer_id, campaign_id)` | Assets de un PMax por `field_type`, incluidos logos/nombre de empresa a nivel de campaña (Brand Guidelines) |
 | `get_audit_log(limit)` | Registro de `apply_plan` |
+| `describe_api_method(method?, filter?)` | Catálogo de los 175 métodos de la API v25 (lectura y escritura), con ruta, si admiten `validateOnly`, herramienta a usar y campos del body |
+| `api_read(method, path_params, body_json)` | Cualquier método de solo lectura que no es GAQL: Keyword Planner (ideas, históricos, previsiones), reach forecast, audience insights, benchmarks, previsualizaciones, generación de textos/imágenes, facturas… |
 | `describe_mutate_operation(operation?, filter?)` | Esquema oficial de la v25: lista de operaciones de mutate con su estado en las barreras y campos modificables de cada recurso, para usar `plan_generic_mutate` en cualquier tipo de campaña sin inventar campos |
 
 | Escritura (plan → `apply_plan`) | Qué hace |
@@ -56,8 +58,9 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `plan_exclude_placements` | Dominios, canales y vídeos de YouTube; campaña o cuenta |
 | `plan_create_custom_audience` | Segmento personalizado por búsquedas (`SEARCH`) o URLs (`AUTO`) |
 | `plan_create_demand_gen_campaign` | Campaña Demand Gen completa en un mutate atómico (ver abajo) |
-| `plan_generic_mutate` | Vía de escape: array de `MutateOperation` (REST camelCase) con las mismas barreras |
-| `apply_plan(plan_id, confirm)` | `confirm` debe ser exactamente `APPLY <plan_id>` |
+| `plan_generic_mutate` | Cualquiera de los 64 tipos de operación de `GoogleAdsService.Mutate` (create/update/remove, IDs temporales, todo o nada), en cualquier tipo de campaña |
+| `plan_api_call(customer_id, method, path_params, body_json, state_queries?)` | Cualquier método de escritura fuera del mutate general: recomendaciones, experimentos, Customer Match, conversiones offline, accesos, vínculos, facturación, subcuentas, assets autogenerados de PMax… |
+| `apply_plan(plan_id, confirm)` | `confirm` = el `confirm_with` del plan: `APPLY <plan_id>` o `APPLY-ELEVATED <plan_id>` |
 | `cancel_plan(plan_id)` | Descarta el plan |
 
 ### Demand Gen: cómo está implementado (verificado en el discovery doc v25)
@@ -77,14 +80,21 @@ Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo 
 
 ## Barreras de seguridad
 
-1. **Dos fases**. Ningún `plan_*` escribe. El plan: comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` → guarda en `STATE_KV` 30 min. `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente las operaciones guardadas (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
-2. **Allowlist de cuentas**: escritura solo en `ALLOWED_CUSTOMER_IDS`; además, ningún resource name de una operación puede apuntar a otra cuenta. Lectura solo en la MCC y sus hijas.
-3. **Campañas nuevas en PAUSED**. Activar una campaña solo es posible con `plan_update_campaign_status` (el genérico lo bloquea).
-4. **Presupuesto**: máximo `MAX_DAILY_BUDGET` por presupuesto diario y subida máxima `MAX_BUDGET_INCREASE_PCT` por plan. Bajadas siempre permitidas. Presupuesto compartido → flag explícito.
-5. **Sin borrados**: `remove` solo en `campaignCriterion`, `adGroupCriterion`, `customerNegativeCriterion`, `sharedCriterion`. `status: REMOVED` también se bloquea.
-6. **Prohibido**: acciones/variables/reglas/objetivos de conversión de cuenta, configuración de cuenta, estrategias de puja de cartera (crear o asignar `bidding_strategy`), listas de usuarios, experimentos… Facturación, accesos de usuario y vínculos de cuenta usan servicios que este servidor nunca llama. Cualquier tipo de operación fuera de la allowlist se rechaza.
-7. **Auditoría** en `STATE_KV` (`audit:*`): fecha UTC, email, cuenta, plan, operaciones exactas, respuesta de la API, resource names y resultado (`APPLIED`, `FAILED`, `ABORTED_STATE_CHANGED`).
-8. **Errores completos**: código (`campaignBudgetError.X`), campo, índice de operación, valor, mensaje y `request-id`.
+Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se puede hacer por el MCP**, con dos niveles de control.
+
+1. **Dos fases siempre**. Ningún `plan_*` escribe. El plan comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` (si el método lo admite) → guarda en `STATE_KV` 30 min. `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente lo guardado (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
+2. **Bloqueo duro (sin excepciones)**: escribir en cuentas fuera de `ALLOWED_CUSTOMER_IDS`, operaciones que referencian otra cuenta y operaciones mal formadas. La lectura se limita a la MCC y sus hijas.
+3. **Confirmación reforzada (`APPLY-ELEVATED <plan_id>`)**: el plan se crea y valida igual, pero lista los motivos y exige la frase reforzada. Aplica a:
+   - borrados de campañas, grupos, anuncios, presupuestos, asset groups, listas, etiquetas, audiencias… y `status: REMOVED`;
+   - activar campañas por el genérico y campañas nuevas que no se crean en `PAUSED`;
+   - presupuestos por encima de `MAX_DAILY_BUDGET`, subidas por encima de `MAX_BUDGET_INCREASE_PCT`, presupuestos compartidos o totales;
+   - conversiones (acciones, reglas, objetivos de cuenta, subida de conversiones), configuración de cuenta, estrategias de puja de cartera, exclusiones/estacionalidad de puja, experimentos y borradores, campañas inteligentes, reservas;
+   - por `plan_api_call`: facturación, accesos de usuarios, vínculos y estructura de cuentas, Customer Match (PII), aplicar recomendaciones, batch jobs, vídeos de YouTube, Local Services.
+4. **Confirmación normal (`APPLY`)**: todo lo demás, incluido quitar criterios, vínculos de assets (sitelinks, titulares/imágenes de asset groups), señales de PMax (search themes, audiencias), ajustes de puja, listas compartidas vinculadas y etiquetas: quitar un vínculo no borra el objeto. También descartar recomendaciones y borrar assets autogenerados de PMax.
+5. **Auditoría** en `STATE_KV` (`audit:*`): fecha UTC, email, cuenta, plan, operaciones o llamada exactas, motivos de refuerzo aceptados, respuesta de la API, resource names y resultado (`APPLIED`, `FAILED`, `ABORTED_STATE_CHANGED`).
+6. **Errores completos**: código (`campaignBudgetError.X`), campo, índice de operación, valor, mensaje y `request-id`.
+
+Para volver a bloquear del todo una categoría: añádela a `HARD_BLOCKED_OPERATIONS` en `src/guards.ts` o a `HARD_BLOCKED_METHODS` en `src/plans/apicall.ts` (vacías por defecto).
 
 ## Puesta en marcha
 

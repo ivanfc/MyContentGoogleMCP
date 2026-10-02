@@ -36,7 +36,8 @@ jobs:
 
   deploy:
     needs: test
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    # Solo se despliega desde main; lanzar el workflow en otra rama ejecuta tests + integración sin desplegar.
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
     environment: production
     env:
@@ -84,8 +85,8 @@ jobs:
           curl -sf "$url/.well-known/oauth-protected-resource"; echo
 
   integration:
-    needs: deploy
-    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+    needs: [test, deploy]
+    if: always() && needs.test.result == 'success' && needs.deploy.result != 'failure' && github.event_name == 'workflow_dispatch' && inputs.run_integration
     runs-on: ubuntu-latest
     environment: production
     env:
