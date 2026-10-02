@@ -64,15 +64,21 @@ describe("plan → apply", () => {
 		expect(ads.lastHeaders?.["login-customer-id"]).toBe("2567236642");
 	});
 
-	it("barreras: un plan por encima del límite no llega a la API", async () => {
+	it("presupuesto por encima del límite: plan válido pero con confirmación reforzada", async () => {
 		const { ads, client, deps } = setup();
 		withBudget(ads, { amount: 25_000_000 });
 		const r = await createPlan(deps, await buildCampaignBudgetPlan(client, CID, "22714600993", 61));
-		expect(r.ok).toBe(false);
-		if (r.ok) return;
-		expect(r.stage).toBe("guards");
-		expect(String(r.errors)).toMatch(/MAX_DAILY_BUDGET/);
-		expect(ads.mutateCalls).toHaveLength(0);
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.elevated.join()).toMatch(/MAX_DAILY_BUDGET/);
+		expect(r.confirm_with).toBe(`APPLY-ELEVATED ${r.plan_id}`);
+		// "APPLY" normal no basta y no ejecuta nada
+		const a1 = await applyPlan(deps, r.plan_id, `APPLY ${r.plan_id}`);
+		expect(a1.ok).toBe(false);
+		expect(a1.message).toMatch(/APPLY-ELEVATED/);
+		expect(ads.mutateCalls.filter((c) => !c.body.validateOnly)).toHaveLength(0);
+		const a2 = await applyPlan(deps, r.plan_id, `APPLY-ELEVATED ${r.plan_id}`);
+		expect(a2.ok).toBe(true);
 	});
 
 	it("errores de validación completos: código, campo, mensaje y request-id", async () => {
@@ -221,20 +227,37 @@ describe("keywords negativas y placements", () => {
 });
 
 describe("mutate genérico", () => {
-	it("pasa por las mismas barreras: remove de campaña bloqueado", async () => {
+	it("borrar una campaña es posible pero exige APPLY-ELEVATED", async () => {
 		const { ads, client, deps } = setup();
 		ads.on(/FROM campaign WHERE campaign.resource_name/, [{ campaign: { resourceName: CAMPAIGN, status: "ENABLED" } }]);
 		const r = await createPlan(deps, await buildGenericPlan(client, CID, JSON.stringify([{ campaignOperation: { remove: CAMPAIGN } }])));
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.elevated.join()).toMatch(/BORRADO/);
+		expect(r.confirm_with).toBe(`APPLY-ELEVATED ${r.plan_id}`);
+	});
+
+	it("acciones de conversión por el genérico: posibles con APPLY-ELEVATED", async () => {
+		const { client, deps } = setup();
+		const r = await createPlan(deps, await buildGenericPlan(client, CID, [{ conversionActionOperation: { create: { name: "x" } } }]));
+		expect(r.ok).toBe(true);
+		if (!r.ok) return;
+		expect(r.elevated.join()).toMatch(/acciones de conversión/);
+	});
+
+	it("cuenta fuera de la lista permitida: bloqueo duro, nunca llega a la API", async () => {
+		const { ads, deps } = setup();
+		const r = await createPlan(deps, {
+			kind: "x",
+			customerId: "1111111111",
+			summary: [],
+			operations: [{ campaignOperation: { update: { resourceName: "customers/1111111111/campaigns/1", status: "PAUSED" }, updateMask: "status" } }],
+			stateQueries: [],
+		});
 		expect(r.ok).toBe(false);
 		if (r.ok) return;
 		expect(r.stage).toBe("guards");
 		expect(ads.mutateCalls).toHaveLength(0);
-	});
-
-	it("bloquea acciones de conversión aunque lleguen por el genérico", async () => {
-		const { client, deps } = setup();
-		const r = await createPlan(deps, await buildGenericPlan(client, CID, [{ conversionActionOperation: { create: { name: "x" } } }]));
-		expect(r.ok).toBe(false);
 	});
 
 	it("resume ANTES → DESPUÉS con los campos del updateMask", async () => {

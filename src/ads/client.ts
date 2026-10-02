@@ -143,7 +143,7 @@ export class GoogleAdsClient {
 		return h;
 	}
 
-	async request(method: "GET" | "POST", path: string, body?: Json): Promise<Json> {
+	async request(method: "GET" | "POST" | "DELETE", path: string, body?: Json): Promise<Json> {
 		const res = await this.fetchImpl(`${GOOGLE_ADS_BASE_URL}/${path}`, {
 			method,
 			headers: await this.headers(),

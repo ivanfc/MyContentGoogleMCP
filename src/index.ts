@@ -6,6 +6,7 @@ import { GoogleAdsClient, GoogleAdsApiError } from "./ads/client";
 import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
 import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, missingSecrets, normalizeCustomerId } from "./config";
 import { describeOperation, listOperations, loadDiscovery } from "./ads/schema";
+import { type ApiCall, buildPath, describeMethod, findMethod, listMethods, mutateRedirect } from "./plans/apicall";
 import { getCampaignAssets } from "./plans/assets";
 import { BIDDING_STRATEGIES, buildBiddingPlans } from "./plans/bidding";
 import {
@@ -38,7 +39,7 @@ const campaignId = z.string().describe('ID numérico de campaña. Ej: "227146009
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD (zona horaria de la cuenta)");
 
 const PLAN_NOTE =
-	"NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 30 minutos.";
+	"Si el plan devuelve elevated (operaciones sensibles o destructivas), la confirmación es \"APPLY-ELEVATED <plan_id>\" y debes enseñar esos motivos al usuario antes de pedirle aprobación. NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 30 minutos.";
 
 export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" });
@@ -177,6 +178,37 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				this.services();
 				const discovery = await loadDiscovery(this.env.STATE_KV);
 				return operation ? describeOperation(discovery, operation, depth, filter) : listOperations(discovery);
+			},
+		);
+
+		this.tool(
+			"describe_api_method",
+			`Catálogo completo de métodos de la Google Ads API ${GOOGLE_ADS_API_VERSION} (175: lectura y escritura) desde el discovery oficial. Sin method: lista (filtrable con filter, p. ej. "recommendation", "experiment", "keyword", "userData") con el tipo, la ruta, si admite validateOnly y qué herramienta usar. Con method: parámetros de ruta y campos del body (rutas, tipos, enums).`,
+			{ method: z.string().optional(), filter: z.string().optional(), depth: z.number().int().min(1).max(4).default(2) },
+			async ({ method, filter, depth }) => {
+				this.services();
+				const discovery = await loadDiscovery(this.env.STATE_KV);
+				return method ? describeMethod(discovery, method, depth, filter) : listMethods(discovery, filter);
+			},
+		);
+
+		this.tool(
+			"api_read",
+			`Ejecuta cualquier método de SOLO LECTURA de la API ${GOOGLE_ADS_API_VERSION} que no sea GAQL: ideas y métricas de keywords (generateKeywordIdeas, generateKeywordHistoricalMetrics, generateKeywordForecastMetrics), previsiones de alcance (generateReachForecast), audience insights, benchmarks, sugerencias de geo/temas, previsualizaciones de anuncios (generateShareablePreviews), generación de textos/imágenes con IA (assetGenerations), facturas… No modifica nada. Ej: method="customers.generateKeywordIdeas", path_params={"customerId":"8460514008"}, body_json='{"language":"languageConstants/1000","geoTargetConstants":["geoTargetConstants/2784"],"keywordSeed":{"keywords":["freight software"]}}'.`,
+			{
+				method: z.string(),
+				path_params: z.record(z.string(), z.string()).default({}),
+				body_json: z.string().default("{}"),
+			},
+			async ({ method, path_params, body_json }) => {
+				const { client, limits } = this.services();
+				const discovery = await loadDiscovery(this.env.STATE_KV);
+				const m = findMethod(discovery, method);
+				if (m.kind !== "read") throw new Error(`${m.id} modifica datos: usa plan_api_call (o plan_generic_mutate).`);
+				const params = { ...path_params };
+				if (params.customerId) params.customerId = await assertReadable(client, limits, params.customerId);
+				const body = JSON.parse(body_json || "{}");
+				return client.request(m.httpMethod, buildPath(m, params), m.httpMethod === "GET" ? undefined : body);
 			},
 		);
 
@@ -339,7 +371,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 
 		this.tool(
 			"plan_generic_mutate",
-			`Vía de escape para operaciones no cubiertas: recibe un array JSON de MutateOperation de GoogleAdsService.Mutate en formato REST camelCase (p. ej. [{"adGroupOperation":{"update":{"resourceName":"customers/8460514008/adGroups/123","status":"PAUSED"},"updateMask":"status"}}]). Pasa por TODAS las barreras: allowlist de cuentas y de tipos de operación, prohibido conversiones/facturación/accesos/vínculos/pujas de cartera, sin remove salvo criterios, límites de presupuesto, campañas nuevas en PAUSED, y no activa campañas (usa plan_update_campaign_status). ${PLAN_NOTE}`,
+			`Cualquier cambio del mutate general de la API (los 64 tipos de operación de GoogleAdsService.Mutate, en cualquier tipo de campaña): array JSON de MutateOperation en formato REST camelCase, p. ej. [{"adGroupOperation":{"update":{"resourceName":"customers/8460514008/adGroups/123","status":"PAUSED"},"updateMask":"status"}}]. Consulta antes los campos con describe_mutate_operation. Admite create/update/remove e IDs temporales negativos (todo o nada). Confirmación reforzada (APPLY-ELEVATED) para: borrados de campañas/grupos/anuncios/presupuestos/listas, status REMOVED, activar campañas, campañas nuevas no pausadas, conversiones, configuración de cuenta, estrategias de cartera, experimentos, presupuestos por encima de MAX_DAILY_BUDGET o subidas > MAX_BUDGET_INCREASE_PCT. Quitar criterios, vínculos de assets, señales, ajustes de puja y etiquetas es confirmación normal. ${PLAN_NOTE}`,
 			{ customer_id: customerId, operations_json: z.string().describe("Array JSON de MutateOperation") },
 			async ({ customer_id, operations_json }) => {
 				const cid = this.writable(customer_id);
@@ -348,9 +380,46 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		);
 
 		this.tool(
+			"plan_api_call",
+			`Cualquier método de ESCRITURA de la Google Ads API ${GOOGLE_ADS_API_VERSION} que no esté en el mutate general: aplicar/descartar recomendaciones, experimentos (programar, terminar, promover), Customer Match (offlineUserDataJobs), subida de conversiones offline, accesos de usuarios, vínculos de cuentas, facturación, crear subcuentas, borrar assets autogenerados de PMax, activar brand guidelines, Local Services… Busca el método y su body con describe_api_method. method = id del catálogo (p. ej. "customers.recommendations.dismiss"); path_params = parámetros de la ruta (customerId, resourceName…); body_json = cuerpo de la petición. Si el método admite validateOnly se valida antes de guardar el plan. Casi todos exigen APPLY-ELEVATED. Los ":mutate" de recursos que ya están en el mutate general se rechazan: usa plan_generic_mutate. ${PLAN_NOTE}`,
+			{
+				customer_id: customerId,
+				method: z.string().describe('Id del método, p. ej. "customers.recommendations.apply"'),
+				path_params: z.record(z.string(), z.string()).default({}).describe('Parámetros de ruta, p. ej. {"customerId":"8460514008"}'),
+				body_json: z.string().default("{}").describe("Cuerpo JSON de la petición"),
+				state_queries: z.array(z.string()).default([]).describe("GAQL opcionales que leen lo que toca la llamada: si cambian entre plan y apply, se aborta"),
+			},
+			async ({ customer_id, method, path_params, body_json, state_queries }) => {
+				const cid = this.writable(customer_id);
+				const discovery = await loadDiscovery(this.env.STATE_KV);
+				const m = findMethod(discovery, method);
+				if (m.kind === "read") throw new Error(`${m.id} es de lectura: usa api_read.`);
+				const redirect = mutateRedirect(discovery, m);
+				if (redirect) throw new Error(`${m.id} equivale a ${redirect} del mutate general: usa plan_generic_mutate para que pase por las barreras por operación.`);
+				let body: Record<string, unknown>;
+				try {
+					body = JSON.parse(body_json || "{}");
+				} catch (e) {
+					throw new Error(`body_json no es JSON válido: ${(e as Error).message}`);
+				}
+				const params = { customerId: cid, ...path_params };
+				const call: ApiCall = { methodId: m.id, httpMethod: m.httpMethod, path: buildPath(m, params), body, supportsValidateOnly: m.supportsValidateOnly };
+				return this.plan(async () => ({
+					kind: "api_call",
+					customerId: cid,
+					summary: [`Llamada ${m.httpMethod} ${call.path} (${m.id})`, `Body: ${JSON.stringify(body).slice(0, 1500)}`],
+					warnings: state_queries.length ? [] : ["Sin state_queries: no se detectarán cambios de estado entre plan y apply."],
+					operations: [],
+					stateQueries: state_queries,
+					apiCall: call,
+				}));
+			},
+		);
+
+		this.tool(
 			"apply_plan",
-			'Ejecuta EXACTAMENTE las operaciones de un plan ya validado. Requiere confirm = "APPLY <plan_id>" literal y SOLO debe llamarse cuando el usuario haya aprobado explícitamente el resumen del plan. Si el estado de la cuenta cambió desde el plan, aborta. Deja registro de auditoría.',
-			{ plan_id: z.string(), confirm: z.string().describe('Exactamente "APPLY <plan_id>"') },
+			'Ejecuta EXACTAMENTE las operaciones de un plan ya validado. confirm debe ser literalmente el confirm_with que devolvió el plan: "APPLY <plan_id>" o, si el plan tiene elevated, "APPLY-ELEVATED <plan_id>". SOLO debe llamarse cuando el usuario haya aprobado explícitamente el resumen (y los motivos elevated, si los hay). Si el estado de la cuenta cambió desde el plan, aborta. Deja registro de auditoría.',
+			{ plan_id: z.string(), confirm: z.string().describe('"APPLY <plan_id>" o "APPLY-ELEVATED <plan_id>" según confirm_with') },
 			async ({ plan_id, confirm }) => applyPlan(this.services().deps, plan_id, confirm),
 		);
 

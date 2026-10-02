@@ -354,11 +354,127 @@ describe.skipIf(missingSecrets(env).length > 0)("cobertura de cambios por tipo d
 				},
 			]));
 		});
-		it("barrera: activar campaña por el genérico está bloqueado", async () => {
+		it("barrera: activar campaña por el genérico exige APPLY-ELEVATED", async () => {
 			const t = ids.SEARCH ? "SEARCH" : "PERFORMANCE_MAX";
 			const r = await createPlan(deps, await buildGenericPlan(client, CID, [{ campaignOperation: { update: { resourceName: camp(t), status: "ENABLED" }, updateMask: "status" } }]));
-			results.push({ type: "BARRERA", change: "activar campaña por genérico", tool: "plan_generic_mutate", ok: !r.ok, detail: r.ok ? "NO BLOQUEADO" : "bloqueado (correcto)" });
+			const ok = r.ok && r.confirm_with.startsWith("APPLY-ELEVATED");
+			results.push({ type: "BARRERA", change: "activar campaña por genérico", tool: "plan_generic_mutate", ok, detail: ok ? "confirmación reforzada (correcto)" : "SIN REFUERZO" });
+			expect(ok).toBe(true);
+		});
+		it("barrera: cuenta fuera de ALLOWED_CUSTOMER_IDS bloqueada", async () => {
+			const r = await createPlan(deps, { kind: "x", customerId: "2567236642", summary: [], operations: [{ campaignOperation: { update: { resourceName: "customers/2567236642/campaigns/1", status: "PAUSED" }, updateMask: "status" } }], stateQueries: [] });
+			results.push({ type: "BARRERA", change: "escritura en cuenta no permitida", tool: "plan_generic_mutate", ok: !r.ok, detail: r.ok ? "NO BLOQUEADO" : "bloqueado (correcto)" });
 			expect(r.ok).toBe(false);
+		});
+	});
+
+	describe("ampliación: borrados, señales, audiencias, cuenta, conversiones y lectura avanzada", () => {
+		/** El plan debe validar contra la API; `elevated` indica si se espera confirmación reforzada. */
+		async function checkPlan(type: string, change: string, draftFn: () => Promise<PlanDraft>, elevated: boolean) {
+			let ok = false;
+			let detail = "";
+			try {
+				const r = await createPlan(deps, await draftFn());
+				if (r.ok) {
+					const isElevated = r.confirm_with.startsWith("APPLY-ELEVATED");
+					ok = isElevated === elevated;
+					detail = `validateOnly OK · ${isElevated ? `APPLY-ELEVATED (${r.elevated.join(" | ").slice(0, 120)})` : "APPLY"}`;
+				} else detail = `[${r.stage}] ${r.message.replace(/\n/g, " ")}`;
+			} catch (e) {
+				detail = `[builder] ${(e as Error).message.replace(/\n/g, " ")}`;
+			}
+			results.push({ type, change, tool: "plan_generic_mutate", ok, detail });
+			expect.soft(ok, `${type} / ${change}: ${detail}`).toBe(true);
+		}
+
+		it("borrar campaña (Search)", async (ctx) => {
+			if (!ids.SEARCH) return ctx.skip();
+			await checkPlan("SEARCH", "BORRAR campaña", generic([{ campaignOperation: { remove: camp("SEARCH") } }]), true);
+		});
+		it("borrar grupo de anuncios (Search)", async (ctx) => {
+			const ag = (ids.SEARCH as Json | undefined)?.adGroup;
+			if (!ag) return ctx.skip();
+			await checkPlan("SEARCH", "BORRAR grupo de anuncios", generic([{ adGroupOperation: { remove: R("adGroups", ag.id) } }]), true);
+		});
+		it("quitar search theme de PMax", async (ctx) => {
+			const pm = ids.PERFORMANCE_MAX as Json | undefined;
+			if (!pm?.assetGroup) return ctx.skip();
+			const sig = (await client.searchAll(CID, `SELECT asset_group_signal.resource_name, asset_group_signal.search_theme.text FROM asset_group_signal WHERE asset_group.id = ${pm.assetGroup.id}`)).find((r) => r.assetGroupSignal.searchTheme?.text);
+			if (!sig) return ctx.skip();
+			await checkPlan("PERFORMANCE_MAX", "quitar search theme", generic([{ assetGroupSignalOperation: { remove: sig.assetGroupSignal.resourceName } }]), false);
+		});
+		it("quitar un titular del asset group (PMax)", async (ctx) => {
+			const pm = ids.PERFORMANCE_MAX as Json | undefined;
+			if (!pm?.agAsset) return ctx.skip();
+			await checkPlan("PERFORMANCE_MAX", "quitar asset de asset group", generic([{ assetGroupAssetOperation: { remove: pm.agAsset.resourceName } }]), false);
+		});
+		it("quitar un sitelink de la campaña (Search)", async (ctx) => {
+			if (!ids.SEARCH) return ctx.skip();
+			// campaign_asset exige campaign.id en el SELECT cuando se filtra por campaña.
+			const ca = (await client.searchAll(CID, `SELECT campaign.id, campaign_asset.resource_name FROM campaign_asset WHERE campaign.id = ${(ids.SEARCH as Json).campaign.id} AND campaign_asset.field_type = 'SITELINK' AND campaign_asset.status != 'REMOVED' LIMIT 1`))[0];
+			if (!ca) return ctx.skip();
+			await checkPlan("SEARCH", "quitar sitelink de campaña", generic([{ campaignAssetOperation: { remove: ca.campaignAsset.resourceName } }]), false);
+		});
+		it("lista de remarketing basada en reglas", async () => {
+			await checkPlan(
+				"CUENTA",
+				"crear lista de remarketing (reglas)",
+				generic([
+					{
+						userListOperation: {
+							create: {
+								name: `MCP coverage visitantes ${Date.now()}`,
+								membershipLifeSpan: 30,
+								ruleBasedUserList: {
+									prepopulationStatus: "REQUESTED",
+									flexibleRuleUserList: {
+										inclusiveRuleOperator: "AND",
+										inclusiveOperands: [{ rule: { ruleItemGroups: [{ ruleItems: [{ name: "url__", stringRuleItem: { operator: "CONTAINS", value: "neurored.com" } }] }] }, lookbackWindowDays: 30 }],
+									},
+								},
+							},
+						},
+					},
+				]),
+				false,
+			);
+		});
+		it("configuración de cuenta: auto-tagging", async () => {
+			await checkPlan("CUENTA", "auto-tagging (configuración de cuenta)", generic([{ customerOperation: { update: { resourceName: `customers/${CID}`, autoTaggingEnabled: true }, updateMask: "auto_tagging_enabled" } }]), true);
+		});
+		it("objetivo de conversión a nivel de campaña (PMax)", async (ctx) => {
+			if (!ids.PERFORMANCE_MAX) return ctx.skip();
+			const id = (ids.PERFORMANCE_MAX as Json).campaign.id;
+			await checkPlan(
+				"PERFORMANCE_MAX",
+				"objetivos de conversión de la campaña",
+				generic([{ conversionGoalCampaignConfigOperation: { update: { resourceName: R("conversionGoalCampaignConfigs", id), goalConfigLevel: "CUSTOMER" }, updateMask: "goal_config_level" } }]),
+				false,
+			);
+		});
+		it("lectura avanzada: ideas de keywords (api_read)", async () => {
+			let ok = false;
+			let detail = "";
+			try {
+				const res = await client.request("POST", `customers/${CID}:generateKeywordIdeas`, {
+					language: "languageConstants/1000",
+					geoTargetConstants: ["geoTargetConstants/2784"],
+					keywordSeed: { keywords: ["freight forwarding software"] },
+					pageSize: 5,
+				});
+				const n = (res.results ?? []).length;
+				ok = n > 0;
+				detail = `${n} ideas, p. ej. "${res.results?.[0]?.text ?? ""}"`;
+			} catch (e) {
+				detail = (e as Error).message.replace(/\n/g, " ");
+				// Limitación del nivel de acceso del proyecto de Google Cloud (Explorer), no del MCP: se registra tal cual.
+				if (/explorer access/i.test(detail)) {
+					results.push({ type: "CUENTA", change: "ideas de keywords (Keyword Planner)", tool: "api_read", ok: true, detail: `NO DISPONIBLE con acceso Explorer del proyecto de Cloud (requiere Basic/Standard): ${detail.slice(0, 200)}` });
+					return;
+				}
+			}
+			results.push({ type: "CUENTA", change: "ideas de keywords (Keyword Planner)", tool: "api_read", ok, detail });
+			expect.soft(ok, detail).toBe(true);
 		});
 	});
 });

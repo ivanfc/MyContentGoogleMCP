@@ -24,8 +24,8 @@ describe("describe_mutate_operation", () => {
 	it("lista operaciones con su estado en las barreras", () => {
 		const l = listOperations(discovery);
 		expect(l.find((x) => x.operation === "campaignOperation")?.guards).toMatch(/^permitida/);
-		expect(l.find((x) => x.operation === "conversionActionOperation")?.guards).toMatch(/PROHIBIDA/);
-		expect(l.find((x) => x.operation === "keywordPlanOperation")?.guards).toMatch(/NO PERMITIDA/);
+		expect(l.find((x) => x.operation === "conversionActionOperation")?.guards).toMatch(/confirmación reforzada/);
+		expect(l.find((x) => x.operation === "keywordPlanOperation")?.guards).toMatch(/^permitida/);
 	});
 	it("devuelve campos modificables (sin output only), anidados, enums limpios e inmutables marcados", () => {
 		const d = describeOperation(discovery, "campaignOperation", 2);
