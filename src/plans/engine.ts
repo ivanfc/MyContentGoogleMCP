@@ -50,6 +50,8 @@ export interface PlanDraft {
 	operations: Json[];
 	/** GAQL que leen exactamente los campos que el plan va a tocar. Se re-ejecutan en apply_plan. */
 	stateQueries: string[];
+	/** Motivos de confirmación reforzada detectados por el constructor (se suman a los de las barreras). */
+	elevated?: string[];
 	guardFlags?: Plan["guardFlags"];
 	preSteps?: PreStep[];
 	apiCall?: ApiCall;
@@ -201,7 +203,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 	const flags = draft.guardFlags ?? {};
 	let elevated: string[];
 	try {
-		elevated = await runGuards(deps, draft);
+		elevated = [...new Set([...(draft.elevated ?? []), ...(await runGuards(deps, draft))])];
 	} catch (e) {
 		if (e instanceof GuardError) {
 			return { ok: false, stage: "guards", summary: draft.summary, warnings, errors: e.violations, message: e.message };

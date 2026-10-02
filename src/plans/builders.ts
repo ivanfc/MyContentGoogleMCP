@@ -94,7 +94,10 @@ export async function buildCampaignStatusPlan(client: GoogleAdsClient, cid: stri
 	if (c.status === status) throw new Error(`La campaña "${c.name}" ya está en ${status}. No hay nada que cambiar.`);
 	if (c.status === "REMOVED") throw new Error(`La campaña "${c.name}" está eliminada; no se puede cambiar.`);
 	const warnings: string[] = [];
-	if (status === "ENABLED") warnings.push("ACTIVACIÓN: la campaña empezará a gastar en cuanto se aplique el plan.");
+	if (status === "ENABLED") {
+		warnings.push("ACTIVACIÓN: la campaña empezará a gastar en cuanto se aplique el plan.");
+		warnings.push(...(await trackingParamGaps(client, cid, c.id, c.channelType)));
+	}
 	return {
 		kind: "update_campaign_status",
 		customerId: cid,
@@ -104,6 +107,33 @@ export async function buildCampaignStatusPlan(client: GoogleAdsClient, cid: stri
 		stateQueries: [`SELECT campaign.resource_name, campaign.status FROM campaign WHERE campaign.id = ${c.id}`],
 		guardFlags: { allowCampaignEnable: status === "ENABLED" },
 	};
+}
+
+/**
+ * Parámetros {_clave} que usan la plantilla de seguimiento o el sufijo de URL de la cuenta y que la campaña
+ * (o alguno de sus grupos activos) no define: ese dato llegaría vacío a la analítica o al CRM.
+ * {_adgroupname} se busca en los grupos; Performance Max no tiene grupos de anuncios y se omite.
+ */
+export async function trackingParamGaps(client: GoogleAdsClient, cid: string, campaignId: string, channelType: string): Promise<string[]> {
+	const tpl = ((await client.searchAll(cid, "SELECT customer.tracking_url_template, customer.final_url_suffix FROM customer"))[0]?.customer ?? {}) as Json;
+	const keys = [...new Set([...`${tpl.trackingUrlTemplate ?? ""} ${tpl.finalUrlSuffix ?? ""}`.matchAll(/\{_([A-Za-z0-9]+)\}/g)].map((m) => m[1]))];
+	if (!keys.length) return [];
+	const params = (list: Json[] | undefined) => new Set((list ?? []).map((p) => String(p.key)));
+	const camp = (await client.searchAll(cid, `SELECT campaign.url_custom_parameters FROM campaign WHERE campaign.id = ${campaignId}`))[0]?.campaign;
+	const campKeys = params(camp?.urlCustomParameters);
+	const out: string[] = [];
+	const agKeys = keys.filter((k) => /^ad_?group_?name$/i.test(k));
+	const missingCamp = keys.filter((k) => !agKeys.includes(k) && !campKeys.has(k));
+	if (missingCamp.length) out.push(`SEGUIMIENTO: la cuenta usa {_${missingCamp.join("}, {_")}} y la campaña no lo define: llegará vacío.`);
+	if (agKeys.length && channelType !== "PERFORMANCE_MAX") {
+		const groups = await client.searchAll(
+			cid,
+			`SELECT ad_group.name, ad_group.url_custom_parameters FROM ad_group WHERE campaign.id = ${campaignId} AND ad_group.status = 'ENABLED'`,
+		);
+		const missing = groups.filter((g) => agKeys.some((k) => !params(g.adGroup?.urlCustomParameters).has(k) && !campKeys.has(k))).map((g) => g.adGroup?.name);
+		if (missing.length) out.push(`SEGUIMIENTO: la cuenta usa {_${agKeys.join("}, {_")}} y estos grupos no lo definen: ${missing.join(", ")}. Llegará vacío.`);
+	}
+	return out;
 }
 
 /* ------------------------------------------------------- budget */
@@ -281,14 +311,40 @@ export async function buildNegativeKeywordsPlan(
 	const toAdd = clean.filter((k) => !existing.has(`${k.toLowerCase()}|${matchType}`));
 	if (!toAdd.length) throw new Error("Todas las keywords negativas ya existen en la campaña.");
 	const skipped = clean.filter((k) => !toAdd.includes(k));
+
+	// ¿La negativa bloquea keywords positivas activas de la propia campaña? (visto en real: 3 exactas bloqueadas)
+	const posQ = `SELECT ad_group.name, ad_group_criterion.keyword.text, ad_group_criterion.keyword.match_type FROM keyword_view WHERE campaign.id = ${c.id} AND ad_group_criterion.status = 'ENABLED' AND ad_group.status = 'ENABLED' AND ad_group_criterion.negative != TRUE`;
+	const positives = (await client.searchAll(cid, posQ)).map((r) => ({
+		adGroup: String(r.adGroup?.name ?? ""),
+		text: String(r.adGroupCriterion?.keyword?.text ?? ""),
+		matchType: String(r.adGroupCriterion?.keyword?.matchType ?? ""),
+	}));
+	const conflicts: string[] = [];
+	for (const neg of toAdd) {
+		const hits = positives.filter((p) => negativeBlocks(neg, matchType, p.text));
+		for (const h of hits) conflicts.push(`"${neg}" (${matchType}) bloquea la keyword activa "${h.text}" (${h.matchType}) del grupo "${h.adGroup}"`);
+	}
 	return {
 		kind: "add_negative_keywords",
 		customerId: cid,
 		summary: [`Campaña "${c.name}" (${c.id})`, ...toAdd.map((k) => `+ Negativa ${matchType}: ${k}`)],
 		warnings: skipped.length ? [`Ya existían (se omiten): ${skipped.join(", ")}`] : [],
+		elevated: conflicts.length ? [`Negativas que bloquean keywords positivas activas de la campaña (si lo que quieres es dejar de pujar por ellas, pausarlas es más limpio): ${conflicts.join("; ")}`] : [],
 		operations: toAdd.map((text) => ({ campaignCriterionOperation: { create: { campaign: c.resourceName, negative: true, keyword: { text, matchType } } } })),
 		stateQueries: [q],
 	};
+}
+
+const words = (s: string) => s.toLowerCase().replace(/[+"[\]]/g, " ").split(/\s+/).filter(Boolean);
+
+/** ¿La negativa (texto + concordancia) impide que la búsqueda igual al texto de la keyword positiva active anuncios? */
+export function negativeBlocks(negative: string, matchType: "EXACT" | "PHRASE" | "BROAD", positiveText: string): boolean {
+	const n = words(negative);
+	const p = words(positiveText);
+	if (!n.length || !p.length) return false;
+	if (matchType === "EXACT") return n.join(" ") === p.join(" ");
+	if (matchType === "PHRASE") return ` ${p.join(" ")} `.includes(` ${n.join(" ")} `);
+	return n.every((w) => p.includes(w));
 }
 
 /* ------------------------------------------------------- placements */

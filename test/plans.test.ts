@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GoogleAdsApiError } from "../src/ads/client";
-import { buildCampaignBudgetPlan, buildCampaignStatusPlan, buildGeoTargetingPlan, buildNegativeKeywordsPlan, parsePlacement } from "../src/plans/builders";
+import { buildCampaignBudgetPlan, buildCampaignStatusPlan, buildGeoTargetingPlan, buildNegativeKeywordsPlan, negativeBlocks, parsePlacement } from "../src/plans/builders";
 import { applyPlan, cancelPlan, createPlan, getAuditLog } from "../src/plans/engine";
 import { buildGenericPlan } from "../src/plans/generic";
 import { CID, adsError, setup } from "./helpers";
@@ -226,6 +226,30 @@ describe("keywords negativas y placements", () => {
 		expect(d.operations[0].campaignCriterionOperation.create.keyword).toEqual({ text: "curso", matchType: "PHRASE" });
 	});
 
+	it("negativas que bloquean keywords positivas activas exigen APPLY-ELEVATED", async () => {
+		const { ads, client, deps } = setup();
+		ads.on(/FROM campaign WHERE campaign.id = 7/, [{ campaign: { resourceName: `customers/${CID}/campaigns/7`, id: "7", name: "x", status: "ENABLED", advertisingChannelType: "SEARCH" } }]);
+		ads.on(/FROM campaign_criterion/, []);
+		ads.on(/FROM keyword_view/, [
+			{ adGroup: { name: "SCM_Software_Exact" }, adGroupCriterion: { keyword: { text: "wms software", matchType: "EXACT" } } },
+			{ adGroup: { name: "TMS" }, adGroupCriterion: { keyword: { text: "tms software", matchType: "EXACT" } } },
+		]);
+		const d = await buildNegativeKeywordsPlan(client, CID, "7", ["wms software", "freight estimate"], "EXACT");
+		expect(d.elevated?.join()).toMatch(/"wms software" \(EXACT\) bloquea la keyword activa "wms software" \(EXACT\) del grupo "SCM_Software_Exact"/);
+		expect(d.elevated?.join()).not.toMatch(/tms/);
+		const r = await createPlan(deps, d);
+		expect(r.ok && r.confirm_with).toMatch(/^APPLY-ELEVATED /);
+	});
+
+	it("negativeBlocks aplica la concordancia de la negativa", () => {
+		expect(negativeBlocks("wms software", "EXACT", "WMS Software")).toBe(true);
+		expect(negativeBlocks("wms", "EXACT", "wms software")).toBe(false);
+		expect(negativeBlocks("wms", "PHRASE", "best wms software")).toBe(true);
+		expect(negativeBlocks("software wms", "PHRASE", "best wms software")).toBe(false);
+		expect(negativeBlocks("software wms", "BROAD", "best wms software")).toBe(true);
+		expect(negativeBlocks("free", "BROAD", "wms software")).toBe(false);
+	});
+
 	it("reconoce dominios, canales y vídeos de YouTube", () => {
 		expect(parsePlacement("https://example.com/")).toEqual({ placement: { url: "example.com" } });
 		expect(parsePlacement("https://www.youtube.com/channel/UCabcdefghijklmnopqrstuv")).toEqual({ youtubeChannel: { channelId: "UCabcdefghijklmnopqrstuv" } });
@@ -320,5 +344,19 @@ describe("cliente", () => {
 		await client.search(CID, "SELECT customer.currency_code FROM customer");
 		await client.search(CID, "SELECT customer.currency_code FROM customer");
 		expect(ads.tokenCalls).toBe(1);
+	});
+});
+
+describe("seguimiento al activar", () => {
+	it("avisa de los parámetros {_x} de la cuenta que la campaña o sus grupos no definen", async () => {
+		const { ads, client } = setup();
+		ads.on(/FROM campaign WHERE campaign.id = 5$/, [{ campaign: { resourceName: `customers/${CID}/campaigns/5`, id: "5", name: "DG", status: "PAUSED", advertisingChannelType: "DEMAND_GEN" } }]);
+		ads.on(/customer.final_url_suffix FROM customer$/, [{ customer: { finalUrlSuffix: "utm_campaign={_campaignname}&utm_id={_adgroupname}" } }]);
+		ads.on(/url_custom_parameters FROM campaign WHERE/, [{ campaign: { urlCustomParameters: [{ key: "campaignname", value: "DG" }] } }]);
+		ads.on(/FROM ad_group WHERE/, [{ adGroup: { name: "UAE" } }, { adGroup: { name: "Rest", urlCustomParameters: [{ key: "adgroupname", value: "Rest" }] } }]);
+		const d = await buildCampaignStatusPlan(client, CID, "5", "ENABLED");
+		const w = d.warnings!.join("\n");
+		expect(w).toMatch(/\{_adgroupname\} y estos grupos no lo definen: UAE\./);
+		expect(w).not.toMatch(/\{_campaignname\}/);
 	});
 });
