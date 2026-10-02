@@ -54,6 +54,16 @@ describe("plan → apply", () => {
 		expect(ads.lastHeaders?.["developer-token"]).toBe("dev");
 	});
 
+	it("sin developer token no envía la cabecera (retirado por Google en 09-2026)", async () => {
+		const { ads } = setup();
+		const { GoogleAdsClient } = await import("../src/ads/client");
+		const { ENV } = await import("./helpers");
+		const { GOOGLE_ADS_DEVELOPER_TOKEN: _d, ...noDev } = ENV;
+		await new GoogleAdsClient(noDev, ads.fetch).search(CID, "SELECT customer.currency_code FROM customer");
+		expect(ads.lastHeaders && "developer-token" in ads.lastHeaders).toBe(false);
+		expect(ads.lastHeaders?.["login-customer-id"]).toBe("2567236642");
+	});
+
 	it("barreras: un plan por encima del límite no llega a la API", async () => {
 		const { ads, client, deps } = setup();
 		withBudget(ads, { amount: 25_000_000 });

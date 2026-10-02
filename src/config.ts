@@ -15,7 +15,8 @@ export const HARD_MAX_ROWS = 10000;
 
 /** Variables que necesita el núcleo de Google Ads (subset de Env). */
 export interface AdsEnv {
-	GOOGLE_ADS_DEVELOPER_TOKEN: string;
+	/** Opcional. Desde el 09-09-2026 el acceso lo da el proyecto de Google Cloud del cliente OAuth. */
+	GOOGLE_ADS_DEVELOPER_TOKEN?: string;
 	GOOGLE_ADS_CLIENT_ID: string;
 	GOOGLE_ADS_CLIENT_SECRET: string;
 	GOOGLE_ADS_REFRESH_TOKEN: string;
@@ -67,7 +68,6 @@ export function getLimits(env: Pick<AdsEnv, "GOOGLE_ADS_LOGIN_CUSTOMER_ID" | "AL
 /** Lista de secretos obligatorios. Devuelve los que faltan (sin imprimir valores). */
 export function missingSecrets(env: Record<string, unknown>): string[] {
 	const required = [
-		"GOOGLE_ADS_DEVELOPER_TOKEN",
 		"GOOGLE_ADS_CLIENT_ID",
 		"GOOGLE_ADS_CLIENT_SECRET",
 		"GOOGLE_ADS_REFRESH_TOKEN",

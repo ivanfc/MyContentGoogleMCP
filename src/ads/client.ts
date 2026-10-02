@@ -132,12 +132,15 @@ export class GoogleAdsClient {
 	}
 
 	private async headers(): Promise<Record<string, string>> {
-		return {
+		const h: Record<string, string> = {
 			Authorization: `Bearer ${await this.getAccessToken()}`,
-			"developer-token": this.env.GOOGLE_ADS_DEVELOPER_TOKEN,
 			"login-customer-id": normalizeCustomerId(this.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
 			"Content-Type": "application/json",
 		};
+		// Google retiró los developer tokens el 09-09-2026: el nivel de acceso lo determina el proyecto de
+		// Google Cloud que emitió el cliente OAuth. La cabecera es opcional (se ignora); solo se envía si existe.
+		if (this.env.GOOGLE_ADS_DEVELOPER_TOKEN) h["developer-token"] = this.env.GOOGLE_ADS_DEVELOPER_TOKEN;
+		return h;
 	}
 
 	async request(method: "GET" | "POST", path: string, body?: Json): Promise<Json> {

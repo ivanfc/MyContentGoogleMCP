@@ -53,7 +53,6 @@ jobs:
         run: npx wrangler deploy
       - name: Sincronizar secretos del Worker
         env:
-          GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
           GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
           GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
           GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
@@ -65,7 +64,7 @@ jobs:
           f="$RUNNER_TEMP/worker-secrets.json"
           trap 'rm -f "$f"' EXIT
           node -e '
-            const names = ["GOOGLE_ADS_DEVELOPER_TOKEN","GOOGLE_ADS_CLIENT_ID","GOOGLE_ADS_CLIENT_SECRET","GOOGLE_ADS_REFRESH_TOKEN","GOOGLE_OAUTH_CLIENT_ID","GOOGLE_OAUTH_CLIENT_SECRET","COOKIE_ENCRYPTION_KEY"];
+            const names = ["GOOGLE_ADS_CLIENT_ID","GOOGLE_ADS_CLIENT_SECRET","GOOGLE_ADS_REFRESH_TOKEN","GOOGLE_OAUTH_CLIENT_ID","GOOGLE_OAUTH_CLIENT_SECRET","COOKIE_ENCRYPTION_KEY"];
             const missing = names.filter((n) => !process.env[n]);
             if (missing.length) { console.error("Faltan secretos de GitHub: " + missing.join(", ")); process.exit(1); }
             require("fs").writeFileSync(process.argv[1], JSON.stringify(Object.fromEntries(names.map((n) => [n, process.env[n]]))), { mode: 0o600 });
@@ -85,7 +84,6 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     env:
-      GOOGLE_ADS_DEVELOPER_TOKEN: ${{ secrets.GOOGLE_ADS_DEVELOPER_TOKEN }}
       GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
       GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
       GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}

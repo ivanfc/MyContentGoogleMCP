@@ -4,10 +4,9 @@
 
 .DESCRIPTION
   1. Carga las credenciales con tu cargador DPAPI (cargar-credenciales.ps1).
-  2. Pide el developer token de Google Ads si no está ya en el entorno (entrada oculta).
-  3. Inicia sesión en Cloudflare con `wrangler login` si hace falta (navegador).
-  4. Despliega el Worker y sube los 7 secretos con `wrangler secret bulk` (fichero temporal que se borra).
-  5. Comprueba el endpoint (401 + metadata OAuth) y ejecuta la integración contra la cuenta real
+  2. Inicia sesión en Cloudflare con `wrangler login` si hace falta (navegador).
+  3. Despliega el Worker y sube los 6 secretos con `wrangler secret bulk` (fichero temporal que se borra).
+  4. Comprueba el endpoint (401 + metadata OAuth) y ejecuta la integración contra la cuenta real
      (solo lectura + validateOnly; nunca aplica cambios).
 
 .EXAMPLE
@@ -26,7 +25,7 @@ $ErrorActionPreference = 'Continue'
 $WorkerUrl = 'https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev'
 $env:CLOUDFLARE_ACCOUNT_ID = 'c6ba6a99369e2c4ade1a5e7d5c855a45'
 $SecretNames = @(
-	'GOOGLE_ADS_DEVELOPER_TOKEN', 'GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REFRESH_TOKEN',
+	'GOOGLE_ADS_CLIENT_ID', 'GOOGLE_ADS_CLIENT_SECRET', 'GOOGLE_ADS_REFRESH_TOKEN',
 	'GOOGLE_OAUTH_CLIENT_ID', 'GOOGLE_OAUTH_CLIENT_SECRET', 'COOKIE_ENCRYPTION_KEY'
 )
 
@@ -35,13 +34,9 @@ if (-not (Test-Path 'wrangler.jsonc')) { throw 'Ejecuta el script desde el repo 
 
 Write-Host '== 1/6 Credenciales'
 & $CredentialLoader
-if (-not $env:GOOGLE_ADS_DEVELOPER_TOKEN) {
-	$sec = Read-Host 'Developer token de Google Ads (MCC 2567236642 > Admin > API Center)' -AsSecureString
-	$env:GOOGLE_ADS_DEVELOPER_TOKEN = [System.Net.NetworkCredential]::new('', $sec).Password
-}
 $missing = $SecretNames | Where-Object { -not [Environment]::GetEnvironmentVariable($_) }
 if ($missing) { throw "Faltan variables: $($missing -join ', ')" }
-Write-Host "   7 secretos presentes (no se muestran)."
+Write-Host "   6 secretos presentes (no se muestran)."
 
 Write-Host '== 2/6 Dependencias y tests unitarios'
 npm ci --no-audit --no-fund | Out-Null

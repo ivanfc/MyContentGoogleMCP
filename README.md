@@ -21,7 +21,7 @@ Claude ──OAuth 2.1 (DCR/PKCE)──► Worker mycontent-google-ads-mcp
                                    ├─ KV OAUTH_KV   estado OAuth (clientes, grants, tokens)
                                    └─ KV STATE_KV   planes pendientes (TTL 30 min) y registro de auditoría
                                           │
-                                          ▼  fetch REST + developer-token + login-customer-id + Bearer
+                                          ▼  fetch REST + login-customer-id + Bearer (sin developer token)
                                  https://googleads.googleapis.com/v25/customers/{id}/googleAds:search|mutate
 ```
 
@@ -83,7 +83,7 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 
 ### 1. Credenciales de Google
 
-- **Developer token** (MCC → Admin → API Center). Debe tener *Basic* o *Standard access* para tocar cuentas reales; con *Test account access* solo funciona contra cuentas de prueba.
+- **Acceso a la API (sin developer token)**: Google retiró los developer tokens el 09-09-2026. El nivel de acceso (test / Basic / Standard) lo tiene ahora el **proyecto de Google Cloud que emite el cliente OAuth** (Cloud Console → Google Ads API). Si la API devuelve `CLOUD_PROJECT_NOT_APPROVED_FOR_PRODUCTION`, ese proyecto solo tiene acceso de prueba y hay que solicitar Basic Access desde la consola. Si existe `GOOGLE_ADS_DEVELOPER_TOKEN` se envía como cabecera opcional (la API la ignora).
 - **Cliente OAuth para la API de Google Ads** (Google Cloud → APIs & Services → Credentials → *Web application*). Añade `https://developers.google.com/oauthplayground` como redirect URI. En [OAuth Playground](https://developers.google.com/oauthplayground) → ⚙ *Use your own OAuth credentials* → scope `https://www.googleapis.com/auth/adwords` → autoriza con la cuenta que tiene acceso a la MCC 2567236642 → *Exchange authorization code for tokens* → copia el **refresh token**. Si el proyecto OAuth está en modo *Testing*, el refresh token caduca a los 7 días: publícalo (*In production*).
 - **Cliente OAuth para el login del MCP** (puede ser el mismo): redirect URI `https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev.workers.dev/callback` (y `http://localhost:8788/callback` para `wrangler dev`). Scopes: `openid email profile`.
 
@@ -92,7 +92,7 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 `.github/workflows/deploy.yml`: en cada PR pasa type-check y tests; en cada push a `main` despliega el Worker y sincroniza sus secretos; con *Run workflow* (manual) además ejecuta la integración contra la cuenta real (solo lectura + `validateOnly`).
 
 Secretos en GitHub → Settings → Environments → `production` (o Settings → Secrets and variables → Actions):
-`GOOGLE_ADS_DEVELOPER_TOKEN`, `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
+`GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.
 Rotar un secreto = actualizarlo en GitHub y relanzar el workflow.
 
 ### 2. Cloudflare (manual)
@@ -113,7 +113,7 @@ export CLOUDFLARE_ACCOUNT_ID=...
 # KV ya creados y configurados en wrangler.jsonc (OAUTH_KV, STATE_KV)
 
 # Secretos: se piden por stdin, no quedan en el historial ni en el repo
-for s in GOOGLE_ADS_DEVELOPER_TOKEN GOOGLE_ADS_CLIENT_ID GOOGLE_ADS_CLIENT_SECRET GOOGLE_ADS_REFRESH_TOKEN \
+for s in GOOGLE_ADS_CLIENT_ID GOOGLE_ADS_CLIENT_SECRET GOOGLE_ADS_REFRESH_TOKEN \
          GOOGLE_OAUTH_CLIENT_ID GOOGLE_OAUTH_CLIENT_SECRET; do npx wrangler secret put $s; done
 openssl rand -hex 32 | npx wrangler secret put COOKIE_ENCRYPTION_KEY
 

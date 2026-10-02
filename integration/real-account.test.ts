@@ -2,7 +2,7 @@
  * Integración contra la cuenta real (8460514008 bajo la MCC 2567236642).
  * SOLO lectura + validateOnly. Este fichero no llama nunca a applyPlan.
  *
- * Requiere en el entorno: GOOGLE_ADS_DEVELOPER_TOKEN, GOOGLE_ADS_CLIENT_ID,
+ * Requiere en el entorno: GOOGLE_ADS_CLIENT_ID,
  * GOOGLE_ADS_CLIENT_SECRET, GOOGLE_ADS_REFRESH_TOKEN.
  * Ejecutar: npm run integration
  */
@@ -18,7 +18,7 @@ import { MemoryKV } from "../test/helpers";
 declare const process: { env: Record<string, string | undefined> };
 
 const env = {
-	GOOGLE_ADS_DEVELOPER_TOKEN: process.env.GOOGLE_ADS_DEVELOPER_TOKEN ?? "",
+	GOOGLE_ADS_DEVELOPER_TOKEN: process.env.GOOGLE_ADS_DEVELOPER_TOKEN || undefined,
 	GOOGLE_ADS_CLIENT_ID: process.env.GOOGLE_ADS_CLIENT_ID ?? "",
 	GOOGLE_ADS_CLIENT_SECRET: process.env.GOOGLE_ADS_CLIENT_SECRET ?? "",
 	GOOGLE_ADS_REFRESH_TOKEN: process.env.GOOGLE_ADS_REFRESH_TOKEN ?? "",
