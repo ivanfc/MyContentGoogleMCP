@@ -86,8 +86,6 @@ Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se pu
 
 1. **Dos fases siempre**. Ningún `plan_*` escribe. El plan comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` (si el método lo admite) → guarda en `STATE_KV` 30 min. `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente lo guardado (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
 2. **Bloqueo duro (sin excepciones)**: escribir en cuentas fuera de `ALLOWED_CUSTOMER_IDS` (con `*`, cuentas que no cuelgan de la MCC), operaciones que referencian otra cuenta y operaciones mal formadas. La lectura se limita a la MCC y sus hijas.
-- **Aplicación de un plan**: se re-comprueba que la cuenta sigue siendo escribible (allowlist o pertenencia a la MCC); un cerrojo global (Durable Object `PlanLock`) impide que dos `apply_plan` simultáneos del mismo plan se ejecuten ambos; si la auditoría falla después de aplicar, la respuesta sigue diciendo que se aplicó (con aviso). Un plan cuya lectura de estado supera 10.000 filas se rechaza en lugar de comparar un subconjunto.
-- **Otras comprobaciones**: reasignar el presupuesto de una campaña pasa los mismos límites que cambiar su importe; en `plan_api_call`, borrar o editar custom audiences/interests exige `APPLY-ELEVATED` y los parámetros de ruta no admiten segmentos vacíos ni relativos (`..`). Con `ALLOWED_CUSTOMER_IDS="*"` la propia MCC también es escribible (vínculos y estructura de cuentas exigen `APPLY-ELEVATED`).
 3. **Confirmación reforzada (`APPLY-ELEVATED <plan_id>`)**: el plan se crea y valida igual, pero lista los motivos y exige la frase reforzada. Aplica a:
    - borrados de campañas, grupos, anuncios, presupuestos, asset groups, listas, etiquetas, audiencias… y `status: REMOVED`;
    - activar campañas por el genérico y campañas nuevas que no se crean en `PAUSED`;
@@ -97,6 +95,11 @@ Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se pu
 4. **Confirmación normal (`APPLY`)**: todo lo demás, incluido quitar criterios, vínculos de assets (sitelinks, titulares/imágenes de asset groups), señales de PMax (search themes, audiencias), ajustes de puja, listas compartidas vinculadas y etiquetas: quitar un vínculo no borra el objeto. También descartar recomendaciones y borrar assets autogenerados de PMax.
 5. **Auditoría** en `STATE_KV` (`audit:*`): fecha UTC, email, cuenta, plan, operaciones o llamada exactas, motivos de refuerzo aceptados, respuesta de la API, resource names y resultado (`APPLIED`, `FAILED`, `ABORTED_STATE_CHANGED`).
 6. **Errores completos**: código (`campaignBudgetError.X`), campo, índice de operación, valor, mensaje y `request-id`.
+
+Detalles adicionales:
+
+- **Aplicación de un plan**: se re-comprueba que la cuenta sigue siendo escribible (allowlist o pertenencia a la MCC); un cerrojo global (Durable Object `PlanLock`) impide que dos `apply_plan` simultáneos del mismo plan se ejecuten ambos; si la auditoría falla después de aplicar, la respuesta sigue diciendo que se aplicó (con aviso). Un plan cuya lectura de estado supera 10.000 filas se rechaza en lugar de comparar un subconjunto.
+- **Otras comprobaciones**: reasignar el presupuesto de una campaña pasa los mismos límites que cambiar su importe; en `plan_api_call`, borrar o editar custom audiences/interests exige `APPLY-ELEVATED` y los parámetros de ruta no admiten segmentos vacíos ni relativos (`..`). Con `ALLOWED_CUSTOMER_IDS="*"` la propia MCC también es escribible (vínculos y estructura de cuentas exigen `APPLY-ELEVATED`).
 
 Para volver a bloquear del todo una categoría: añádela a `HARD_BLOCKED_OPERATIONS` en `src/guards.ts` o a `HARD_BLOCKED_METHODS` en `src/plans/apicall.ts` (vacías por defecto).
 
