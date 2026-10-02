@@ -4,7 +4,7 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import { GoogleAdsClient, GoogleAdsApiError } from "./ads/client";
 import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
-import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, missingSecrets, normalizeCustomerId } from "./config";
+import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId } from "./config";
 import { describeOperation, listOperations, loadDiscovery } from "./ads/schema";
 import { type ApiCall, buildPath, describeMethod, findMethod, listMethods, mutateRedirect } from "./plans/apicall";
 import { getCampaignAssets } from "./plans/assets";
@@ -56,12 +56,14 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		return { limits, client, deps };
 	}
 
-	private writable(cid: string) {
-		const { limits } = this.services();
+	private async writable(cid: string) {
+		const { limits, client } = this.services();
 		const id = normalizeCustomerId(cid);
-		if (!limits.allowedCustomerIds.has(id)) {
+		if (!isWriteAllowed(limits, id)) {
 			throw new Error(`La cuenta ${id} no está en ALLOWED_CUSTOMER_IDS (${[...limits.allowedCustomerIds].join(", ")}). Escritura denegada.`);
 		}
+		// Siempre (también con "*"): la cuenta tiene que colgar de la MCC; si no, se rechaza.
+		await assertReadable(client, limits, id);
 		return id;
 	}
 
@@ -219,7 +221,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Plan para pausar (PAUSED) o activar (ENABLED) una campaña. Activar una campaña siempre requiere este plan explícito. ${PLAN_NOTE} Ej: {customer_id:"8460514008", campaign_id:"22714600993", status:"PAUSED"}`,
 			{ customer_id: customerId, campaign_id: campaignId, status: z.enum(["ENABLED", "PAUSED"]) },
 			async ({ customer_id, campaign_id, status }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildCampaignStatusPlan(this.services().client, cid, campaign_id, status));
 			},
 		);
@@ -229,7 +231,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Plan para cambiar el presupuesto diario de una campaña. new_daily_amount en la MONEDA DE LA CUENTA (no micros), p. ej. 10 = 10,00 EUR/día. Límites: máx. MAX_DAILY_BUDGET y subida máx. MAX_BUDGET_INCREASE_PCT por plan; las bajadas siempre se permiten. Si el presupuesto es compartido, se niega salvo allow_shared_budget=true. ${PLAN_NOTE}`,
 			{ customer_id: customerId, campaign_id: campaignId, new_daily_amount: z.number().positive(), allow_shared_budget: z.boolean().default(false) },
 			async ({ customer_id, campaign_id, new_daily_amount, allow_shared_budget }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildCampaignBudgetPlan(this.services().client, cid, campaign_id, new_daily_amount, allow_shared_budget));
 			},
 		);
@@ -246,7 +248,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				max_cpc: z.number().positive().optional(),
 			},
 			async ({ customer_id, campaign_id, ...input }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				const { client, deps } = this.services();
 				const drafts = await buildBiddingPlans(client, cid, campaign_id, input);
 				const attempts: unknown[] = [];
@@ -271,7 +273,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				replace_includes: z.boolean().default(false),
 			},
 			async ({ customer_id, campaign_id, ...rest }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildGeoTargetingPlan(this.services().client, cid, campaign_id, rest));
 			},
 		);
@@ -281,7 +283,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Plan para añadir keywords negativas a una campaña (omite las que ya existen). Ej: {keywords:["gratis","curso"], match_type:"PHRASE"}. ${PLAN_NOTE}`,
 			{ customer_id: customerId, campaign_id: campaignId, keywords: z.array(z.string()).min(1), match_type: z.enum(["EXACT", "PHRASE", "BROAD"]) },
 			async ({ customer_id, campaign_id, keywords, match_type }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildNegativeKeywordsPlan(this.services().client, cid, campaign_id, keywords, match_type));
 			},
 		);
@@ -291,7 +293,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Plan para excluir placements (dominios, canales o vídeos de YouTube) en una campaña (scope=campaign, requiere campaign_id) o en toda la cuenta (scope=account). Ej: {scope:"account", placements:["example.com","youtube.com/channel/UCxxxxxxxxxxxxxxxxxxxxxx"]}. ${PLAN_NOTE}`,
 			{ customer_id: customerId, scope: z.enum(["campaign", "account"]), placements: z.array(z.string()).min(1), campaign_id: z.string().optional() },
 			async ({ customer_id, scope, placements, campaign_id }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildExcludePlacementsPlan(this.services().client, cid, scope, placements, campaign_id));
 			},
 		);
@@ -301,7 +303,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Plan para crear un segmento personalizado (custom audience). Solo search_terms → tipo SEARCH ("personas que buscaron estos términos en Google"); con urls → tipo AUTO. Ej: {name:"Freight forwarding software searchers", search_terms:["freight forwarding software","tms software"]}. ${PLAN_NOTE}`,
 			{ customer_id: customerId, name: z.string().min(1), search_terms: z.array(z.string()).default([]), urls: z.array(z.string()).optional() },
 			async ({ customer_id, name, search_terms, urls }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildCustomAudiencePlan(this.services().client, cid, name, search_terms, urls ?? []));
 			},
 		);
@@ -357,7 +359,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 					.min(1),
 			},
 			async ({ customer_id, ...input }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				const { client, deps } = this.services();
 				const dg = input as DemandGenInput;
 				// Verificado contra la API real: Demand Gen exige el recurso Audience (si no, CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET).
@@ -374,7 +376,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			`Cualquier cambio del mutate general de la API (los 64 tipos de operación de GoogleAdsService.Mutate, en cualquier tipo de campaña): array JSON de MutateOperation en formato REST camelCase, p. ej. [{"adGroupOperation":{"update":{"resourceName":"customers/8460514008/adGroups/123","status":"PAUSED"},"updateMask":"status"}}]. Consulta antes los campos con describe_mutate_operation. Admite create/update/remove e IDs temporales negativos (todo o nada). Confirmación reforzada (APPLY-ELEVATED) para: borrados de campañas/grupos/anuncios/presupuestos/listas, status REMOVED, activar campañas, campañas nuevas no pausadas, conversiones, configuración de cuenta, estrategias de cartera, experimentos, presupuestos por encima de MAX_DAILY_BUDGET o subidas > MAX_BUDGET_INCREASE_PCT. Quitar criterios, vínculos de assets, señales, ajustes de puja y etiquetas es confirmación normal. ${PLAN_NOTE}`,
 			{ customer_id: customerId, operations_json: z.string().describe("Array JSON de MutateOperation") },
 			async ({ customer_id, operations_json }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				return this.plan(() => buildGenericPlan(this.services().client, cid, operations_json));
 			},
 		);
@@ -390,7 +392,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				state_queries: z.array(z.string()).default([]).describe("GAQL opcionales que leen lo que toca la llamada: si cambian entre plan y apply, se aborta"),
 			},
 			async ({ customer_id, method, path_params, body_json, state_queries }) => {
-				const cid = this.writable(customer_id);
+				const cid = await this.writable(customer_id);
 				const discovery = await loadDiscovery(this.env.STATE_KV);
 				const m = findMethod(discovery, method);
 				if (m.kind === "read") throw new Error(`${m.id} es de lectura: usa api_read.`);

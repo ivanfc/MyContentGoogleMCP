@@ -30,8 +30,18 @@ export interface AdsEnv {
 export interface Limits {
 	loginCustomerId: string;
 	allowedCustomerIds: Set<string>;
+	/** ALLOWED_CUSTOMER_IDS="*": cualquier cuenta de la jerarquía de la MCC (se verifica contra la API antes de escribir). */
+	allowAllUnderMcc: boolean;
 	maxDailyBudget: number;
 	maxBudgetIncreasePct: number;
+}
+
+/**
+ * ¿Se puede escribir en esta cuenta? Con "*" la pertenencia a la MCC la verifica el servidor contra la API
+ * (customer_client) antes de construir el plan; aquí solo se comprueba la configuración.
+ */
+export function isWriteAllowed(limits: Limits, customerId: string): boolean {
+	return limits.allowAllUnderMcc || limits.allowedCustomerIds.has(customerId);
 }
 
 export function normalizeCustomerId(id: string | number): string {
@@ -57,9 +67,11 @@ function parsePositiveNumber(value: string | undefined, fallback: number, name: 
 }
 
 export function getLimits(env: Pick<AdsEnv, "GOOGLE_ADS_LOGIN_CUSTOMER_ID" | "ALLOWED_CUSTOMER_IDS" | "MAX_DAILY_BUDGET" | "MAX_BUDGET_INCREASE_PCT">): Limits {
+	const ids = parseList(env.ALLOWED_CUSTOMER_IDS);
 	return {
 		loginCustomerId: normalizeCustomerId(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
-		allowedCustomerIds: new Set(parseList(env.ALLOWED_CUSTOMER_IDS).map(normalizeCustomerId)),
+		allowedCustomerIds: new Set(ids.filter((x) => x !== "*").map(normalizeCustomerId)),
+		allowAllUnderMcc: ids.includes("*"),
 		maxDailyBudget: parsePositiveNumber(env.MAX_DAILY_BUDGET, 60, "MAX_DAILY_BUDGET"),
 		maxBudgetIncreasePct: parsePositiveNumber(env.MAX_BUDGET_INCREASE_PCT, 100, "MAX_BUDGET_INCREASE_PCT"),
 	};

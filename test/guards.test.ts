@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getLimits, normalizeCustomerId, toMicros } from "../src/config";
+import { getLimits, isWriteAllowed, normalizeCustomerId, toMicros } from "../src/config";
 import { GuardError, enforceGuards } from "../src/guards";
 import { CID, ENV } from "./helpers";
 
@@ -154,5 +154,44 @@ describe("budgetReader", () => {
 		const { client, ads } = setup();
 		expect(await budgetReader(client, CID)(`customers/${CID}/campaignBudgets/1' OR campaign_budget.id > '0`)).toBeUndefined();
 		expect(ads.queries.filter((q) => q.includes("campaign_budget"))).toHaveLength(0);
+	});
+});
+
+describe('ALLOWED_CUSTOMER_IDS="*" (todas las cuentas de la MCC)', () => {
+	const wild = getLimits({ ...ENV, ALLOWED_CUSTOMER_IDS: "*" });
+	it("activa allowAllUnderMcc y permite cualquier cuenta en la configuración", () => {
+		expect(wild.allowAllUnderMcc).toBe(true);
+		expect(wild.allowedCustomerIds.size).toBe(0);
+		expect(isWriteAllowed(wild, "1234567890")).toBe(true);
+		expect(isWriteAllowed(limits, "1234567890")).toBe(false);
+	});
+	it("combina comodín y lista explícita", () => {
+		const mixed = getLimits({ ...ENV, ALLOWED_CUSTOMER_IDS: "*, 846-051-4008" });
+		expect(mixed.allowAllUnderMcc).toBe(true);
+		expect(mixed.allowedCustomerIds.has("8460514008")).toBe(true);
+	});
+	it("las guardas aceptan otra cuenta con comodín, pero siguen bloqueando referencias cruzadas", async () => {
+		const other = "1234567890";
+		const ok = await enforceGuards(
+			[{ campaignOperation: { update: { resourceName: `customers/${other}/campaigns/1`, status: "PAUSED" }, updateMask: "status" } }],
+			{ customerId: other, limits: wild, getBudget: budget(1) },
+		);
+		expect(ok.elevated).toEqual([]);
+		const v = await hard(
+			[{ campaignOperation: { update: { resourceName: `customers/${CID}/campaigns/1`, status: "PAUSED" }, updateMask: "status" } }],
+			{ customerId: other, limits: wild, getBudget: budget(1) },
+		);
+		expect(v.join(" ")).toMatch(/otra cuenta/);
+	});
+});
+
+describe("assertReadable con comodín", () => {
+	it("rechaza cuentas que no cuelgan de la MCC", async () => {
+		const { assertReadable, _resetChildCache } = await import("../src/tools/read");
+		_resetChildCache();
+		const client = { searchAll: async () => [{ customerClient: { id: "8460514008", descriptiveName: "N", manager: false, status: "ENABLED", level: 1 } }] } as any;
+		const wild = getLimits({ ...ENV, ALLOWED_CUSTOMER_IDS: "*" });
+		await expect(assertReadable(client, wild, "8460514008")).resolves.toBe("8460514008");
+		await expect(assertReadable(client, wild, "9999999999")).rejects.toThrow(/no cuelga de la MCC/);
 	});
 });

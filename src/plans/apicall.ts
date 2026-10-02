@@ -1,6 +1,6 @@
 import type { Json } from "../ads/client";
 import { type FieldInfo, PREFIX, flatten, schemaName } from "../ads/schema";
-import { type Limits, normalizeCustomerId } from "../config";
+import { type Limits, isWriteAllowed, normalizeCustomerId } from "../config";
 import { GuardError } from "../guards";
 
 /** Llamada a cualquier método de la Google Ads API descrito en el discovery doc (fuera del mutate general). */
@@ -121,7 +121,7 @@ function collect(value: unknown, out: string[] = []): string[] {
 /** Barreras de plan_api_call: duras (cuenta) y motivos de confirmación reforzada. */
 export function guardApiCall(call: ApiCall, customerId: string, limits: Limits): string[] {
 	const v: string[] = [];
-	if (!limits.allowedCustomerIds.has(customerId)) {
+	if (!isWriteAllowed(limits, customerId)) {
 		throw new GuardError([`La cuenta ${customerId} no está en ALLOWED_CUSTOMER_IDS. No se permite escribir en ella.`]);
 	}
 	const refs = collect(call.path).concat(collect(call.body));
