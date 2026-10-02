@@ -14,9 +14,9 @@
 	},
 	"kv_namespaces": [
 		// Estado del proveedor OAuth (clientes, grants, tokens).
-		{ "binding": "OAUTH_KV", "id": "REPLACE_WITH_OAUTH_KV_ID" },
+		{ "binding": "OAUTH_KV", "id": "ffd172bc7fe04bd18a5e47c87b41d692" },
 		// Planes de cambio (TTL 30 min) y registro de auditoría.
-		{ "binding": "STATE_KV", "id": "REPLACE_WITH_STATE_KV_ID" }
+		{ "binding": "STATE_KV", "id": "4452ee2559d14f218d70a1258f76f58b" }
 	],
 	"vars": {
 		"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "2567236642",
@@ -25,7 +25,7 @@
 		"MAX_DAILY_BUDGET": "60",
 		"MAX_BUDGET_INCREASE_PCT": "100",
 		// URL pública del Worker (audiencia OAuth). Vacía = origen de la petición.
-		"PUBLIC_BASE_URL": ""
+		"PUBLIC_BASE_URL": "https://mycontent-google-ads-mcp.mycontent-ivan.workers.dev"
 	},
 	"observability": { "enabled": true },
 	"dev": { "port": 8788 }
