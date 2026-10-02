@@ -89,6 +89,14 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 
 ### 2. Cloudflare
 
+Desde Windows, con tu cargador DPAPI de credenciales, todo el despliegue (tests, `wrangler login`, deploy, secretos, comprobación e integración) se hace con:
+
+```powershell
+.\scripts\deploy.ps1 -CredentialLoader C:\ruta\cargar-credenciales.ps1
+```
+
+Manualmente:
+
 ```bash
 npm ci
 export CLOUDFLARE_API_TOKEN=...   # permisos: Workers Scripts, Workers KV Storage, (Durable Objects)
