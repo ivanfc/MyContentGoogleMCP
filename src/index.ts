@@ -35,6 +35,12 @@ const fail = (e: unknown): ToolResult => ({
 	content: [{ type: "text", text: e instanceof GoogleAdsApiError ? `${e.message}\n\n${JSON.stringify(e.toJSON(), null, 2)}` : e instanceof Error ? e.message : String(e) }],
 });
 
+/** Resumen de error para los logs: código de la API y mensaje corto, sin datos de la cuenta. */
+function errorSummary(e: unknown): Record<string, unknown> {
+	if (e instanceof GoogleAdsApiError) return { http: e.httpStatus, codes: e.details.map((d) => d.errorCode).slice(0, 5), request_id: e.requestId };
+	return { message: (e instanceof Error ? e.message : String(e)).slice(0, 200) };
+}
+
 const customerId = z.string().describe('ID de cuenta de Google Ads, 10 dígitos, con o sin guiones. Ej: "8460514008"');
 const campaignId = z.string().describe('ID numérico de campaña. Ej: "22714600993"');
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD (zona horaria de la cuenta)");
@@ -71,9 +77,28 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 	private tool<S extends z.ZodRawShape>(name: string, description: string, shape: S, handler: (args: z.infer<z.ZodObject<S>>) => Promise<unknown>) {
 		// biome-ignore lint: el SDK tipa el shape de forma genérica
 		(this.server as any).registerTool(name, { description, inputSchema: shape }, async (args: any) => {
+			const started = Date.now();
+			const log = (outcome: "ok" | "rejected" | "error", e?: unknown) =>
+				// Una línea JSON por llamada (Workers Logs). Sin argumentos ni resultados: solo herramienta, cuenta, duración y error.
+				console.log(
+					JSON.stringify({
+						evt: "tool_call",
+						tool: name,
+						customer_id: typeof args?.customer_id === "string" ? args.customer_id.replace(/\D/g, "") : undefined,
+						user: this.props?.email,
+						outcome,
+						ms: Date.now() - started,
+						...(e ? { error: errorSummary(e) } : {}),
+					}),
+				);
 			try {
-				return ok(await handler(args));
+				const data = await handler(args);
+				const result = ok(data);
+				if (result.isError) log("rejected", new Error(String((data as { stage?: string; message?: string }).stage ?? (data as { message?: string }).message ?? "")));
+				else log("ok");
+				return result;
 			} catch (e) {
+				log("error", e);
 				return fail(e);
 			}
 		});

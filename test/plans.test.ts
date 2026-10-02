@@ -360,3 +360,16 @@ describe("seguimiento al activar", () => {
 		expect(w).not.toMatch(/\{_campaignname\}/);
 	});
 });
+
+describe("resumen del mutate genérico", () => {
+	it("un campo ausente en el estado actual se muestra como vacío/por defecto, no como undefined", async () => {
+		const { ads, client } = setup();
+		ads.on(/FROM campaign WHERE campaign.resource_name/, [{ campaign: { resourceName: CAMPAIGN, status: "ENABLED" } }]);
+		const d = await buildGenericPlan(client, CID, [
+			{ campaignOperation: { update: { resourceName: CAMPAIGN, urlCustomParameters: [{ key: "campaignname", value: "X" }] }, updateMask: "url_custom_parameters" } },
+		]);
+		const s = d.summary.join("\n");
+		expect(s).toContain("url_custom_parameters: (vacío / valor por defecto) → [");
+		expect(s).not.toContain("undefined");
+	});
+});
