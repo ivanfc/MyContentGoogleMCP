@@ -108,7 +108,7 @@ Para volver a bloquear del todo una categoría: añádela a `HARD_BLOCKED_OPERAT
 
 ### Despliegue continuo con GitHub Actions (recomendado)
 
-`.github/workflows/deploy.yml`: en cada PR pasa type-check y tests; en cada push a `main` despliega el Worker y sincroniza sus secretos; con *Run workflow* (manual) además ejecuta la integración contra la cuenta real (solo lectura + `validateOnly`).
+`.github/workflows/deploy.yml`: en cada PR pasa type-check y tests; en cada push a `main` despliega el Worker y sincroniza sus secretos; con *Run workflow* (manual) además ejecuta la integración contra la cuenta real (solo lectura + `validateOnly`). `integration_scope=smoke` (por defecto) ejecuta solo `integration/real-account.test.ts` (unas decenas de operaciones); `full` añade la cobertura completa por tipo de campaña, que consume cientos de operaciones de la cuota diaria de la API (Basic Access: 15.000/día compartidas con el uso real). Lanza `full` solo cuando cambien los constructores de planes o las barreras.
 
 Secretos en GitHub → Settings → Environments → `production` (o Settings → Secrets and variables → Actions):
 `GOOGLE_ADS_CLIENT_ID`, `GOOGLE_ADS_CLIENT_SECRET`, `GOOGLE_ADS_REFRESH_TOKEN`, `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET`, `COOKIE_ENCRYPTION_KEY`, `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`.

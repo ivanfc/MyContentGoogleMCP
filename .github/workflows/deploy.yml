@@ -13,6 +13,11 @@ on:
         description: "Ejecutar integración contra la cuenta real (solo lectura + validateOnly)"
         type: boolean
         default: true
+      integration_scope:
+        description: "smoke = solo lectura y planes básicos (pocas operaciones de API); full = cobertura completa (cientos de operaciones, consume cuota diaria)"
+        type: choice
+        options: [smoke, full]
+        default: smoke
 
 permissions:
   contents: read
@@ -100,4 +105,6 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - run: npm run integration
+      - name: Integración (${{ inputs.integration_scope }})
+        run: |
+          if [ "${{ inputs.integration_scope }}" = "full" ]; then npm run integration; else npm run integration -- integration/real-account.test.ts; fi
