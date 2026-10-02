@@ -52,6 +52,10 @@ export interface DemandGenInput {
 	target_cpa?: number;
 	conversion_goal_category?: string;
 	restrict_to_conversion_goal?: boolean;
+	/** Segmentación optimizada de los grupos. Por defecto false: solo las audiencias indicadas. */
+	optimized_targeting?: boolean;
+	/** Parámetros personalizados de URL de la campaña ({_clave} en las plantillas). */
+	url_custom_parameters?: Record<string, string>;
 	country_codes: string[];
 	geo_target_type: "PRESENCE" | "PRESENCE_OR_INTEREST";
 	language_codes?: string[];
@@ -123,18 +127,18 @@ export async function buildDemandGenPlan(
 			throw new Error(`La cuenta no tiene ningún objetivo de conversión de categoría ${goalCategory}. Categorías existentes: ${[...new Set(goals.map((g) => g.category))].join(", ")}.`);
 		}
 		const biddable = goals.filter((g) => g.biddable).map((g) => `${g.category}/${g.origin}`);
-		if (!matching.some((g) => g.biddable) && !input.restrict_to_conversion_goal) {
+		if (!matching.some((g) => g.biddable) && input.restrict_to_conversion_goal === false) {
 			throw new Error(
-				`El objetivo ${goalCategory} existe pero no es "biddable" (objetivo de cuenta por defecto). Objetivos de cuenta actuales: ${biddable.join(", ") || "ninguno"}. Activa restrict_to_conversion_goal=true o cambia el objetivo por defecto en la UI.`,
+				`El objetivo ${goalCategory} existe pero no es "biddable" (objetivo de cuenta por defecto). Objetivos de cuenta actuales: ${biddable.join(", ") || "ninguno"}. Quita restrict_to_conversion_goal=false o cambia el objetivo por defecto en la UI.`,
 			);
 		}
 		stateQueries.push(goalQuery);
-		if (input.restrict_to_conversion_goal) {
-			summary.push(`Objetivo de conversión de campaña: SOLO ${goalCategory} (experimental: campaignConversionGoal con ID temporal)`);
+		if (input.restrict_to_conversion_goal !== false) {
+			summary.push(`Objetivo de conversión de campaña: SOLO ${goalCategory} (el resto de objetivos de cuenta quedan no biddable en esta campaña)`);
 		} else {
 			summary.push(`Objetivo de conversión: objetivos por defecto de la cuenta (${biddable.join(", ")}). Incluye ${goalCategory}.`);
 			const others = biddable.filter((b) => !b.startsWith(`${goalCategory}/`));
-			if (others.length) warnings.push(`La campaña también optimizará hacia otros objetivos de cuenta biddable: ${others.join(", ")}. Si quieres solo ${goalCategory}, usa restrict_to_conversion_goal=true.`);
+			if (others.length) warnings.push(`La campaña también optimizará hacia otros objetivos de cuenta biddable: ${others.join(", ")}. Si quieres solo ${goalCategory}, no pases restrict_to_conversion_goal=false.`);
 		}
 	}
 
@@ -156,6 +160,27 @@ export async function buildDemandGenPlan(
 		return ok;
 	};
 	const pickImg = (ft: string, ratio: number, minW: number, minH: number) => pick(ft, 5, fits(ratio, minW, minH)).map((a) => a.resourceName);
+
+	// ---------- parámetros de URL que exigen las plantillas de la cuenta
+	// Si la plantilla de seguimiento o el sufijo de URL de la cuenta usan {_clave}, cada campaña tiene que definir
+	// esa clave; si no, el valor llega vacío (p. ej. el nombre de campaña en el CRM). Visto en Neurored con {_campaignname}.
+	const tplQuery = "SELECT customer.tracking_url_template, customer.final_url_suffix FROM customer";
+	const tpl = ((await client.searchAll(cid, tplQuery))[0]?.customer ?? {}) as Json;
+	const requiredKeys = [...new Set([...`${tpl.trackingUrlTemplate ?? ""} ${tpl.finalUrlSuffix ?? ""}`.matchAll(/\{_([A-Za-z0-9]+)\}/g)].map((m) => m[1]))];
+	const urlParams: Record<string, string> = { ...(input.url_custom_parameters ?? {}) };
+	const missingKeys: string[] = [];
+	for (const k of requiredKeys) {
+		if (urlParams[k] !== undefined) continue;
+		if (/^campaign_?name$/i.test(k)) urlParams[k] = input.name;
+		else missingKeys.push(k);
+	}
+	if (missingKeys.length) {
+		throw new Error(
+			`Las plantillas de la cuenta usan {_${missingKeys.join("}, {_")}} y la campaña no lo define. Pásalo en url_custom_parameters (p. ej. {"${missingKeys[0]}":"valor"}); si no, ese dato llegará vacío.`,
+		);
+	}
+	for (const k of Object.keys(urlParams)) if (!/^[A-Za-z0-9]{1,16}$/.test(k)) throw new Error(`Clave de parámetro de URL inválida: "${k}" (alfanumérica, máx. 16).`);
+	if (requiredKeys.length) stateQueries.push(tplQuery);
 
 	// ---------- presupuesto
 	const budgetMicros = toMicros(input.daily_budget);
@@ -185,6 +210,7 @@ export async function buildDemandGenPlan(
 				containsEuPoliticalAdvertising: "DOES_NOT_CONTAIN_EU_POLITICAL_ADVERTISING",
 				// upgradedTargeting=true: ubicación e idioma a nivel de grupo de anuncios (permite países distintos por grupo).
 				demandGenCampaignSettings: { upgradedTargeting: true },
+				...(Object.keys(urlParams).length ? { urlCustomParameters: Object.entries(urlParams).map(([key, value]) => ({ key, value })) } : {}),
 				...(input.start_date ? { startDateTime: `${input.start_date} 00:00:00` } : {}),
 				...(input.end_date ? { endDateTime: `${input.end_date} 23:59:59` } : {}),
 			},
@@ -194,9 +220,11 @@ export async function buildDemandGenPlan(
 		`(no existe) → Campaña Demand Gen "${input.name}" en PAUSED`,
 		`  Presupuesto diario: ${(budgetMicros / 1e6).toFixed(2)} ${currency} | Puja: ${input.bidding_strategy}${input.target_cpa ? ` (CPA objetivo ${input.target_cpa} ${currency})` : ""}`,
 		`  Opción de ubicación: ${input.geo_target_type} | Canales: ${input.channels.join(", ")} (resto desactivados)`,
+		`  Segmentación optimizada: ${input.optimized_targeting ? "ACTIVADA (Google amplía más allá de las audiencias)" : "desactivada (solo las audiencias indicadas)"}`,
+		`  Parámetros de URL: ${Object.entries(urlParams).map(([k, v]) => `{_${k}}=${v}`).join(", ") || "ninguno"}${requiredKeys.length ? ` (la cuenta usa ${requiredKeys.map((k) => `{_${k}}`).join(", ")})` : ""}`,
 	);
 
-	if (goalCategory && input.restrict_to_conversion_goal) {
+	if (goalCategory && input.restrict_to_conversion_goal !== false) {
 		const campaignTmpId = campaignRn.split("/").pop();
 		for (const g of goals) {
 			ops.push({
@@ -239,6 +267,7 @@ export async function buildDemandGenPlan(
 					name: ag.name,
 					status: "ENABLED",
 					demandGenAdGroupSettings: { channelControls: { selectedChannels } },
+					optimizedTargetingEnabled: input.optimized_targeting === true,
 				},
 			},
 		});
