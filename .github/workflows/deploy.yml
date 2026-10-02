@@ -1,0 +1,102 @@
+name: CI / Deploy
+
+# PR: tests. Push a main: tests + deploy + sincronización de secretos.
+# Manual (workflow_dispatch): deploy y, opcionalmente, integración contra la cuenta real
+# (solo lectura + validateOnly; nunca aplica cambios).
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      run_integration:
+        description: "Ejecutar integración contra la cuenta real (solo lectura + validateOnly)"
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm test
+
+  deploy:
+    needs: test
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Deploy Worker
+        run: npx wrangler deploy
+      - name: Sincronizar secretos del Worker
+        env:
+          GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+          GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+          GOOGLE_OAUTH_CLIENT_ID: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          GOOGLE_OAUTH_CLIENT_SECRET: ${{ secrets.GOOGLE_OAUTH_CLIENT_SECRET }}
+          COOKIE_ENCRYPTION_KEY: ${{ secrets.COOKIE_ENCRYPTION_KEY }}
+        run: |
+          set -euo pipefail
+          f="$RUNNER_TEMP/worker-secrets.json"
+          trap 'rm -f "$f"' EXIT
+          node -e '
+            const names = ["GOOGLE_ADS_CLIENT_ID","GOOGLE_ADS_CLIENT_SECRET","GOOGLE_ADS_REFRESH_TOKEN","GOOGLE_OAUTH_CLIENT_ID","GOOGLE_OAUTH_CLIENT_SECRET","COOKIE_ENCRYPTION_KEY"];
+            const missing = names.filter((n) => !process.env[n]);
+            if (missing.length) { console.error("Faltan secretos de GitHub: " + missing.join(", ")); process.exit(1); }
+            require("fs").writeFileSync(process.argv[1], JSON.stringify(Object.fromEntries(names.map((n) => [n, process.env[n]]))), { mode: 0o600 });
+          ' "$f"
+          npx wrangler secret bulk "$f"
+      - name: Comprobar endpoint
+        run: |
+          set -euo pipefail
+          url="https://googleads-mcp.mycontent.academy"
+          # El dominio propio puede tardar unos minutos en tener certificado tras el primer deploy.
+          for i in $(seq 1 18); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url/mcp" -H 'content-type: application/json' -d '{}' || true)
+            [ "$code" = "401" ] && break
+            echo "intento $i: /mcp -> $code; reintento en 10 s"; sleep 10
+          done
+          echo "/mcp sin token -> $code"; test "$code" = "401"
+          curl -sf "$url/.well-known/oauth-protected-resource"; echo
+
+  integration:
+    needs: deploy
+    if: github.event_name == 'workflow_dispatch' && inputs.run_integration
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      GOOGLE_ADS_CLIENT_ID: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+      GOOGLE_ADS_CLIENT_SECRET: ${{ secrets.GOOGLE_ADS_CLIENT_SECRET }}
+      GOOGLE_ADS_REFRESH_TOKEN: ${{ secrets.GOOGLE_ADS_REFRESH_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run integration
