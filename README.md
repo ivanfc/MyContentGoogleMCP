@@ -44,11 +44,13 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `get_change_history(customer_id, days≤30)` | `change_event` |
 | `get_asset_group_assets(customer_id, campaign_id)` | Assets de un PMax por `field_type`, incluidos logos/nombre de empresa a nivel de campaña (Brand Guidelines) |
 | `get_audit_log(limit)` | Registro de `apply_plan` |
+| `describe_mutate_operation(operation?, filter?)` | Esquema oficial de la v25: lista de operaciones de mutate con su estado en las barreras y campos modificables de cada recurso, para usar `plan_generic_mutate` en cualquier tipo de campaña sin inventar campos |
 
 | Escritura (plan → `apply_plan`) | Qué hace |
 |---|---|
 | `plan_update_campaign_status` | PAUSED / ENABLED. Única vía para activar campañas |
 | `plan_update_campaign_budget` | Presupuesto diario; detecta presupuesto compartido y exige `allow_shared_budget=true` |
+| `plan_update_bidding_strategy` | Estrategia estándar (Max. conversiones ± tCPA, Max. valor ± tROAS, Max. clics, CPC manual); elige la representación que acepta la API según el tipo de campaña |
 | `plan_set_geo_targeting` | Incluir/excluir países (ISO → `geoTargetConstants` vía API), `PRESENCE` / `PRESENCE_OR_INTEREST`, `replace_includes` |
 | `plan_add_negative_keywords` | Negativas de campaña (omite duplicadas) |
 | `plan_exclude_placements` | Dominios, canales y vídeos de YouTube; campaña o cuenta |
@@ -68,6 +70,10 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 - **Audiencias** (verificado contra la API real): Demand Gen exige un recurso `Audience` (segmento del custom audience) + `adGroupCriterion.audience`; el criterio directo `customAudience` devuelve `CANNOT_ADD_AUDIENCE_SEGMENT_CRITERION_WHEN_AUDIENCE_GROUPED_IS_SET`.
 - **Segmentos nuevos**: `CustomAudienceService` no forma parte de `GoogleAdsService.Mutate`, así que van como *paso previo* del plan (`customAudiences:mutate`). En el plan se validan en su servicio y la campaña se valida sustituyendo el segmento por uno existente de la cuenta; en `apply_plan` se crea primero el segmento y la campaña usa su resource name real. Si la campaña fallara después, el segmento queda creado (se indica en la respuesta y en la auditoría).
 - **Anuncio**: `ad.demandGenMultiAssetAd` con titulares, descripciones, `businessName`, `logoImages`, `marketingImages` (1,91:1), `squareMarketingImages`, `portraitMarketingImages`, `tallPortraitMarketingImages`, `callToActionText`. Con `reuse_assets_from_campaign_id` rellena lo que falte desde un PMax (titulares ≤30 caracteres, descripciones ≤90, logos y nombre de empresa a nivel de campaña), descartando imágenes que no cumplan la proporción o el tamaño mínimo de Demand Gen (p. ej. logos no cuadrados). `image_urls` sube imágenes nuevas como assets en el mismo mutate.
+
+## Cobertura
+
+Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo de campaña: [COVERAGE.md](COVERAGE.md).
 
 ## Barreras de seguridad
 

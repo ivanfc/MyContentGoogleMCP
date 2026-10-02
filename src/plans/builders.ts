@@ -314,6 +314,10 @@ export async function buildExcludePlacementsPlan(
 	if (scope === "campaign") {
 		if (!campaignId) throw new Error("scope=campaign requiere campaign_id.");
 		const c = await getCampaign(client, cid, campaignId);
+		if (c.channelType === "PERFORMANCE_MAX") {
+			// Verificado contra la API: OPERATION_NOT_PERMITTED_FOR_CONTEXT en campaign_criterion.placement para PMax.
+			throw new Error("Performance Max no admite exclusiones de placement a nivel de campaña. Usa scope=\"account\" (se aplican también a PMax).");
+		}
 		const q = `SELECT campaign_criterion.resource_name, campaign_criterion.placement.url, campaign_criterion.youtube_channel.channel_id, campaign_criterion.youtube_video.video_id FROM campaign_criterion WHERE campaign.id = ${c.id} AND campaign_criterion.negative = TRUE AND campaign_criterion.type IN ('PLACEMENT', 'YOUTUBE_CHANNEL', 'YOUTUBE_VIDEO')`;
 		const existing = new Set((await client.searchAll(cid, q)).map((r) => placementKey(r.campaignCriterion)));
 		const toAdd = parsed.filter((p) => !existing.has(placementKey(p)));

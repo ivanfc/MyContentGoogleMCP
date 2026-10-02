@@ -5,7 +5,9 @@ import { z } from "zod";
 import { GoogleAdsClient, GoogleAdsApiError } from "./ads/client";
 import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
 import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, missingSecrets, normalizeCustomerId } from "./config";
+import { describeOperation, listOperations, loadDiscovery } from "./ads/schema";
 import { getCampaignAssets } from "./plans/assets";
+import { BIDDING_STRATEGIES, buildBiddingPlans } from "./plans/bidding";
 import {
 	buildCampaignBudgetPlan,
 	buildCampaignStatusPlan,
@@ -163,6 +165,21 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			},
 		);
 
+		this.tool(
+			"describe_mutate_operation",
+			`Esquema oficial (discovery doc de la Google Ads API ${GOOGLE_ADS_API_VERSION}) para construir plan_generic_mutate SIN inventar campos. Sin argumentos: lista todas las operaciones de mutate (campaignOperation, adGroupCriterionOperation, assetGroupSignalOperation, campaignBidModifierOperation…) y si las barreras las permiten. Con operation: campos modificables del recurso (ruta, tipo, enums, inmutable/requerido), excluidos los de solo lectura. Usa filter para acotar (p. ej. operation="campaignOperation", filter="bidding" o "network"). Sirve para cualquier tipo de campaña: Search, Performance Max, Demand Gen, Display, Video, Shopping, App…`,
+			{
+				operation: z.string().optional().describe('Clave de MutateOperation, p. ej. "campaignOperation"'),
+				filter: z.string().optional().describe("Texto para filtrar rutas/descripciones"),
+				depth: z.number().int().min(1).max(4).default(2),
+			},
+			async ({ operation, filter, depth }) => {
+				this.services();
+				const discovery = await loadDiscovery(this.env.STATE_KV);
+				return operation ? describeOperation(discovery, operation, depth, filter) : listOperations(discovery);
+			},
+		);
+
 		/* ============================== ESCRITURA (plan) ============================== */
 
 		this.tool(
@@ -182,6 +199,31 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			async ({ customer_id, campaign_id, new_daily_amount, allow_shared_budget }) => {
 				const cid = this.writable(customer_id);
 				return this.plan(() => buildCampaignBudgetPlan(this.services().client, cid, campaign_id, new_daily_amount, allow_shared_budget));
+			},
+		);
+
+		this.tool(
+			"plan_update_bidding_strategy",
+			`Plan para cambiar la estrategia de puja ESTÁNDAR de una campaña (Search, PMax, Display, Demand Gen…): MAXIMIZE_CONVERSIONS (target_cpa opcional, en moneda de la cuenta), MAXIMIZE_CONVERSION_VALUE (target_roas opcional como ratio: 4 = 400 %), MAXIMIZE_CLICKS (max_cpc opcional) o MANUAL_CPC. Prueba con validateOnly las representaciones que admite la API para ese tipo de campaña y guarda la válida. Se niega si la campaña usa una estrategia de cartera compartida. Ej: {campaign_id:"22714600993", strategy:"MAXIMIZE_CONVERSIONS", target_cpa:45}. ${PLAN_NOTE}`,
+			{
+				customer_id: customerId,
+				campaign_id: campaignId,
+				strategy: z.enum(BIDDING_STRATEGIES),
+				target_cpa: z.number().positive().optional(),
+				target_roas: z.number().positive().optional(),
+				max_cpc: z.number().positive().optional(),
+			},
+			async ({ customer_id, campaign_id, ...input }) => {
+				const cid = this.writable(customer_id);
+				const { client, deps } = this.services();
+				const drafts = await buildBiddingPlans(client, cid, campaign_id, input);
+				const attempts: unknown[] = [];
+				for (const d of drafts) {
+					const r = await createPlan(deps, d);
+					if (r.ok || r.stage !== "validation") return attempts.length ? { ...r, rejected_representations: attempts } : r;
+					attempts.push({ representation: d.operations[0].campaignOperation.updateMask, errors: r.errors });
+				}
+				return { ok: false, message: "Ninguna representación de la estrategia ha validado para esta campaña.", attempts };
 			},
 		);
 

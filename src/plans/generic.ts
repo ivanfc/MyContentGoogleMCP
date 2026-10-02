@@ -71,14 +71,21 @@ export async function buildGenericPlan(client: GoogleAdsClient, cid: string, ope
 		}
 		const mask = action === "update" ? String(op.updateMask ?? "").split(",").map((s: string) => s.trim()).filter(Boolean) : [];
 		const fields = [`${res}.resource_name`, ...mask.map((m: string) => `${res}.${m}`), ...(res.endsWith("criterion") || res === "campaign" || res === "ad_group" ? [`${res}.status`] : [])];
-		const q = `SELECT ${[...new Set(fields)].join(", ")} FROM ${res} WHERE ${res}.resource_name = '${target}'`;
-		stateQueries.push(q);
+		let q = `SELECT ${[...new Set(fields)].join(", ")} FROM ${res} WHERE ${res}.resource_name = '${target}'`;
 		let before: Json | undefined;
 		try {
 			before = (await client.searchAll(cid, q))[0]?.[camel(res)];
-		} catch (e) {
-			throw new Error(`No se pudo leer el estado de ${target} (#${i}): ${(e as Error).message}`);
+		} catch {
+			// Algún campo del updateMask no es seleccionable en GAQL: se lee solo el estado básico.
+			q = `SELECT ${res}.resource_name FROM ${res} WHERE ${res}.resource_name = '${target}'`;
+			try {
+				before = (await client.searchAll(cid, q))[0]?.[camel(res)];
+			} catch (e) {
+				throw new Error(`No se pudo leer el estado de ${target} (#${i}): ${(e as Error).message}`);
+			}
+			warnings.push(`#${i}: los campos ${mask.join(", ")} no se pueden leer por GAQL; el ANTES no se muestra y no entran en la detección de cambios.`);
 		}
+		stateQueries.push(q);
 		if (!before) throw new Error(`#${i}: ${target} no existe en la cuenta ${cid}.`);
 		if (action === "remove") {
 			summary.push(`#${i} ${kind} REMOVE ${target} (estado actual ${JSON.stringify(before.status ?? "?")}) → eliminado`);

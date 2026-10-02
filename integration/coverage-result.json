@@ -1,0 +1,520 @@
+[
+  {
+    "type": "SEARCH",
+    "change": "estado de campaña",
+    "tool": "plan_update_campaign_status",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "presupuesto (bajada)",
+    "tool": "plan_update_campaign_budget",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "geo: excluir país + PRESENCE",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "geo: opción de ubicación",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "keyword negativa",
+    "tool": "plan_add_negative_keywords",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "placement excluido (campaña)",
+    "tool": "plan_exclude_placements",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "nombre",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "fecha de fin",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "final_url_suffix",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "puja: MAXIMIZE_CONVERSIONS + tCPA",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversions.target_cpa_micros"
+  },
+  {
+    "type": "SEARCH",
+    "change": "puja: MAXIMIZE_CONVERSIONS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversions.target_cpa_micros"
+  },
+  {
+    "type": "SEARCH",
+    "change": "puja: MAXIMIZE_CONVERSION_VALUE + tROAS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversion_value.target_roas"
+  },
+  {
+    "type": "SEARCH",
+    "change": "puja: MAXIMIZE_CLICKS + CPC máx.",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía target_spend.cpc_bid_ceiling_micros"
+  },
+  {
+    "type": "SEARCH",
+    "change": "puja: MANUAL_CPC",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía manual_cpc.enhanced_cpc_enabled"
+  },
+  {
+    "type": "SEARCH",
+    "change": "idioma (criterio de campaña)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "ad schedule",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "bid modifier dispositivo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "sitelink (asset + campaign_asset)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "network: sin search partners",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "estado de grupo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "nuevo grupo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "keyword nueva",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "estado de keyword",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "negativa de grupo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "estado de anuncio",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "anuncio RSA nuevo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "estado de campaña",
+    "tool": "plan_update_campaign_status",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "presupuesto (bajada)",
+    "tool": "plan_update_campaign_budget",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "geo: excluir país + PRESENCE",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "geo: opción de ubicación",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "keyword negativa",
+    "tool": "plan_add_negative_keywords",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "placement excluido (campaña)",
+    "tool": "plan_exclude_placements",
+    "ok": true,
+    "detail": "NO SOPORTADO por la API: [builder] Performance Max no admite exclusiones de placement a nivel de campaña. Usa scope=\"account\" (se aplican también a PMax)."
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "nombre",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "fecha de fin",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "final_url_suffix",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "puja: MAXIMIZE_CONVERSIONS + tCPA",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversions.target_cpa_micros"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "puja: MAXIMIZE_CONVERSIONS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversions.target_cpa_micros"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "puja: MAXIMIZE_CONVERSION_VALUE + tROAS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversion_value.target_roas"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "puja: MAXIMIZE_CLICKS + CPC máx.",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "NO SOPORTADO por la API: [builder] Performance Max solo admite MAXIMIZE_CONVERSIONS (con o sin CPA objetivo) y MAXIMIZE_CONVERSION_VALUE (con o sin ROAS objetivo)."
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "puja: MANUAL_CPC",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "NO SOPORTADO por la API: [builder] Performance Max solo admite MAXIMIZE_CONVERSIONS (con o sin CPA objetivo) y MAXIMIZE_CONVERSION_VALUE (con o sin ROAS objetivo)."
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "idioma (criterio de campaña)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "ad schedule",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "bid modifier dispositivo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "NO SOPORTADO por la API: [validation] Google Ads API error HTTP 400 INVALID_ARGUMENT: Request contains an invalid argument. request-id: PrZ4akM86eOsQsvs94CChw - [operationAccessDeniedError.OPERATION_NOT_PERMITTED_FOR_CAMPAIGN_TYPE] This operation is not permitted on this campaign type | campo: campaign_criterion_operation.create.bid_modifier | operación #0 | valor: 0.8"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "sitelink (asset + campaign_asset)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "estado de asset group",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "search theme (asset group signal)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "titular nuevo (asset + asset_group_asset)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "pausar asset de asset group",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "PERFORMANCE_MAX",
+    "change": "final URL de asset group",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "estado de campaña",
+    "tool": "plan_update_campaign_status",
+    "ok": true,
+    "detail": "ACTIVACIÓN: la campaña empezará a gastar en cuanto se aplique el plan."
+  },
+  {
+    "type": "DISPLAY",
+    "change": "presupuesto (bajada)",
+    "tool": "plan_update_campaign_budget",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "geo: excluir país + PRESENCE",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "geo: opción de ubicación",
+    "tool": "plan_set_geo_targeting",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "keyword negativa",
+    "tool": "plan_add_negative_keywords",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "placement excluido (campaña)",
+    "tool": "plan_exclude_placements",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "nombre",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "fecha de fin",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "final_url_suffix",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "puja: MAXIMIZE_CONVERSIONS + tCPA",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía target_cpa.target_cpa_micros"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "puja: MAXIMIZE_CONVERSIONS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversions.target_cpa_micros"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "puja: MAXIMIZE_CONVERSION_VALUE + tROAS",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía maximize_conversion_value.target_roas"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "puja: MAXIMIZE_CLICKS + CPC máx.",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía target_spend.cpc_bid_ceiling_micros"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "puja: MANUAL_CPC",
+    "tool": "plan_update_bidding_strategy",
+    "ok": true,
+    "detail": "validateOnly OK vía manual_cpc.enhanced_cpc_enabled"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "idioma (criterio de campaña)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "ad schedule",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "bid modifier dispositivo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "sitelink (asset + campaign_asset)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "estado de grupo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "nuevo grupo",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "DISPLAY",
+    "change": "estado de anuncio",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "CUENTA",
+    "change": "placement excluido (cuenta)",
+    "tool": "plan_exclude_placements",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "CUENTA",
+    "change": "custom audience",
+    "tool": "plan_create_custom_audience",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "SEARCH",
+    "change": "crear campaña (budget+campaña+grupo+keyword+RSA)",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "validateOnly OK"
+  },
+  {
+    "type": "BARRERA",
+    "change": "activar campaña por genérico",
+    "tool": "plan_generic_mutate",
+    "ok": true,
+    "detail": "bloqueado (correcto)"
+  }
+]
