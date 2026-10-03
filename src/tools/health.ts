@@ -99,13 +99,30 @@ export async function accountHealthCheck(client: GoogleAdsClient, cid: string) {
 	});
 
 	await run("objetivos_de_conversion", async () => {
-		const goals = await client.searchAll(cid, "SELECT customer_conversion_goal.category, customer_conversion_goal.origin, customer_conversion_goal.biddable FROM customer_conversion_goal");
-		const soft = goals.filter((g) => g.customerConversionGoal.biddable === true && SOFT_GOALS.has(g.customerConversionGoal.category));
-		if (soft.length) {
+		// Lo que cuenta es el objetivo EFECTIVO de cada campaña (campaign_conversion_goal), no solo el de la cuenta:
+		// una campaña puede heredar los de la cuenta o tenerlos restringidos (p. ej. la Demand Gen creada por el MCP).
+		const rows = await client.searchAll(
+			cid,
+			"SELECT campaign.name, campaign_conversion_goal.category, campaign_conversion_goal.origin FROM campaign_conversion_goal WHERE campaign.status = 'ENABLED' AND campaign_conversion_goal.biddable = TRUE",
+		);
+		const softByCampaign = new Map<string, Set<string>>();
+		for (const r of rows) {
+			const g = r.campaignConversionGoal;
+			if (!SOFT_GOALS.has(g.category)) continue;
+			const set = softByCampaign.get(r.campaign.name) ?? new Set<string>();
+			set.add(`${g.category}/${g.origin}`);
+			softByCampaign.set(r.campaign.name, set);
+		}
+		const byGoals = new Map<string, string[]>();
+		for (const [name, set] of softByCampaign) {
+			const key = [...set].sort().join(", ");
+			byGoals.set(key, [...(byGoals.get(key) ?? []), name]);
+		}
+		for (const [goals, names] of byGoals) {
 			findings.push({
-				severity: "medium",
+				severity: "high",
 				check: "objetivos_de_conversion",
-				detail: `Objetivos de cuenta "biddable" que no son leads ni ventas: ${soft.map((g) => `${g.customerConversionGoal.category}/${g.customerConversionGoal.origin}`).join(", ")}. Toda campaña que use los objetivos de cuenta optimiza también hacia ellos.`,
+				detail: `${names.length} campaña(s) activa(s) optimizan también hacia objetivos que no son leads ni ventas (${goals}): ${names.join(", ")}. Suele venir de los objetivos de cuenta; se corrige en la cuenta o restringiendo el objetivo de cada campaña.`,
 			});
 		}
 	});

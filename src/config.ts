@@ -6,8 +6,13 @@
 export const GOOGLE_ADS_API_VERSION = "v25";
 export const GOOGLE_ADS_BASE_URL = `https://googleads.googleapis.com/${GOOGLE_ADS_API_VERSION}`;
 
-/** Caducidad de los planes de cambio (segundos). */
-export const PLAN_TTL_SECONDS = 30 * 60;
+/**
+ * Caducidad de los planes de cambio (segundos). 24 h: la aprobación humana ("respóndeme OK") puede llegar
+ * horas después. Lo que protege de aplicar sobre un estado distinto es el hash de estado,
+ * no la caducidad.
+ */
+export const PLAN_TTL_SECONDS = 24 * 60 * 60;
+export const PLAN_TTL_LABEL = "24 h";
 
 /** Límite por defecto de filas devueltas por gaql_search. */
 export const DEFAULT_MAX_ROWS = 1000;

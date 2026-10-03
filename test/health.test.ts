@@ -20,9 +20,11 @@ describe("account_health_check", () => {
 			{ campaign: { id: "1" }, adGroup: { name: "SCM" }, adGroupCriterion: { keyword: { text: "wms software", matchType: "EXACT" } } },
 			{ campaign: { id: "1" }, adGroup: { name: "TMS" }, adGroupCriterion: { keyword: { text: "tms software", matchType: "EXACT" } } },
 		]);
-		ads.on(/FROM customer_conversion_goal/, [
-			{ customerConversionGoal: { category: "SUBMIT_LEAD_FORM", origin: "WEBSITE", biddable: true } },
-			{ customerConversionGoal: { category: "ENGAGEMENT", origin: "YOUTUBE_HOSTED", biddable: true } },
+		ads.on(/FROM campaign_conversion_goal/, [
+			{ campaign: { name: "Search_OK" }, campaignConversionGoal: { category: "SUBMIT_LEAD_FORM", origin: "WEBSITE" } },
+			{ campaign: { name: "Search_OK" }, campaignConversionGoal: { category: "ENGAGEMENT", origin: "YOUTUBE_HOSTED" } },
+			{ campaign: { name: "PMax" }, campaignConversionGoal: { category: "ENGAGEMENT", origin: "YOUTUBE_HOSTED" } },
+			{ campaign: { name: "DG_sin_nada" }, campaignConversionGoal: { category: "SUBMIT_LEAD_FORM", origin: "WEBSITE" } },
 		]);
 		ads.on(/campaign.primary_status_reasons FROM campaign/, [
 			{ campaign: { name: "Search_OK", primaryStatus: "ELIGIBLE" } },
@@ -37,7 +39,8 @@ describe("account_health_check", () => {
 		expect(text).not.toMatch(/seguimiento\|(Search_OK|PMax)\|/);
 		expect(text).toMatch(/negativa "wms software" \(EXACT\) bloquea la keyword activa "wms software"/);
 		expect(text).not.toMatch(/tms software/);
-		expect(text).toMatch(/medium\|objetivos_de_conversion\|\|.*ENGAGEMENT\/YOUTUBE_HOSTED/);
+		expect(text).toMatch(/high\|objetivos_de_conversion\|\|2 campaña\(s\).*ENGAGEMENT\/YOUTUBE_HOSTED.*Search_OK, PMax/);
+		expect(text).not.toMatch(/objetivos_de_conversion.*DG_sin_nada/);
 		expect(text).toMatch(/medium\|estado_de_campanas\|DG_sin_nada\|Estado LIMITED: BUDGET_CONSTRAINED/);
 		expect(text).toMatch(/high\|anuncios_rechazados\|Search_OK\|Anuncio 9/);
 		expect(r.hallazgos[0].severity).toBe("high");
@@ -46,7 +49,7 @@ describe("account_health_check", () => {
 
 	it("una consulta que falla no tumba el resto de comprobaciones", async () => {
 		const { ads, client } = setup();
-		ads.on(/FROM customer_conversion_goal/, () => {
+		ads.on(/FROM campaign_conversion_goal/, () => {
 			throw new Error("boom");
 		});
 		const r = await accountHealthCheck(client, CID);

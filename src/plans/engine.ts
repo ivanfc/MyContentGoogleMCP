@@ -1,5 +1,5 @@
 import { GoogleAdsApiError, type GoogleAdsClient, type Json } from "../ads/client";
-import { type Limits, PLAN_TTL_SECONDS, fromMicros } from "../config";
+import { type Limits, PLAN_TTL_LABEL, PLAN_TTL_SECONDS, fromMicros } from "../config";
 import { type BudgetInfo, GuardError, enforceGuards } from "../guards";
 import { type ApiCall, guardApiCall } from "./apicall";
 
@@ -203,7 +203,7 @@ function guardCtx(deps: Deps, customerId: string, flags: Plan["guardFlags"]) {
 	};
 }
 
-/** Fase 1: barreras → lectura de estado → validateOnly → guardar plan en KV (30 min). */
+/** Fase 1: barreras → lectura de estado → validateOnly → guardar plan en KV (PLAN_TTL_SECONDS). */
 export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResult> {
 	const warnings = [...(draft.warnings ?? [])];
 	if (!draft.stateQueries.length && !draft.apiCall) {
@@ -277,6 +277,28 @@ export async function loadPlan(deps: Deps, planId: string): Promise<Plan | undef
 	return plan;
 }
 
+/** Planes pendientes (no aplicados ni caducados), más recientes primero. Sirve para recuperar un plan_id perdido. */
+export async function listPendingPlans(deps: Deps, customerId?: string) {
+	const list = await deps.kv.list({ prefix: "plan:", limit: 100 });
+	const out = [];
+	for (const k of list.keys) {
+		const plan = await loadPlan(deps, k.name.slice("plan:".length));
+		if (!plan || (customerId && plan.customerId !== customerId)) continue;
+		out.push({
+			plan_id: plan.id,
+			kind: plan.kind,
+			customer_id: plan.customerId,
+			created_by: plan.createdBy,
+			created_at_utc: plan.createdAt,
+			expires_at_utc: new Date(plan.expiresAt).toISOString(),
+			confirm_with: confirmPhrase(plan.id, plan.elevated ?? []),
+			elevated: plan.elevated ?? [],
+			summary: plan.summary.slice(0, 12),
+		});
+	}
+	return out.sort((a, b) => b.created_at_utc.localeCompare(a.created_at_utc));
+}
+
 export async function cancelPlan(deps: Deps, planId: string) {
 	const plan = await loadPlan(deps, planId);
 	if (!plan) return { ok: false, message: `El plan ${planId} no existe o ha caducado.` };
@@ -330,7 +352,7 @@ function extractResourceNames(response: Json): string[] {
 /** Fase 2: ejecuta exactamente las operaciones guardadas, si el estado no ha cambiado. */
 export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 	const plan = await loadPlan(deps, planId);
-	if (!plan) return { ok: false, message: `El plan ${planId} no existe o ha caducado (30 min). Genera un plan nuevo.` };
+	if (!plan) return { ok: false, message: `El plan ${planId} no existe o ha caducado (${PLAN_TTL_LABEL}). Genera un plan nuevo.` };
 	// Defensa en profundidad: las barreras se re-evalúan con el estado actual.
 	let elevatedNow: string[];
 	try {

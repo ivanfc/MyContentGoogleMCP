@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GoogleAdsApiError } from "../src/ads/client";
 import { buildCampaignBudgetPlan, buildCampaignStatusPlan, buildGeoTargetingPlan, buildNegativeKeywordsPlan, negativeBlocks, parsePlacement } from "../src/plans/builders";
-import { applyPlan, cancelPlan, createPlan, getAuditLog } from "../src/plans/engine";
+import { applyPlan, cancelPlan, createPlan, getAuditLog, listPendingPlans } from "../src/plans/engine";
 import { buildGenericPlan } from "../src/plans/generic";
 import { CID, adsError, setup } from "./helpers";
 
@@ -138,17 +138,21 @@ describe("plan → apply", () => {
 		expect((await getAuditLog(kv as unknown as KVNamespace, 10))[0].outcome).toBe("ABORTED_STATE_CHANGED");
 	});
 
-	it("los planes caducan a los 30 minutos", async () => {
+	it("los planes caducan a las 24 h y list_pending_plans los recupera mientras tanto", async () => {
 		const { ads, client, deps, clock } = setup();
 		withBudget(ads, { amount: 25_000_000 });
 		const r = await createPlan(deps, await buildCampaignBudgetPlan(client, CID, "22714600993", 10));
 		if (!r.ok) throw new Error("plan");
-		clock.advance(29 * 60_000);
-		expect((await cancelPlan(deps, "p_nope")).ok).toBe(false);
-		clock.advance(2 * 60_000);
+		clock.advance(23 * 3600_000);
+		const pending = await listPendingPlans(deps, CID);
+		expect(pending.map((p) => p.plan_id)).toEqual([r.plan_id]);
+		expect(pending[0].confirm_with).toBe(`APPLY ${r.plan_id}`);
+		expect(await listPendingPlans(deps, "1111111111")).toEqual([]);
+		clock.advance(2 * 3600_000);
+		expect(await listPendingPlans(deps, CID)).toEqual([]);
 		const a = await applyPlan(deps, r.plan_id, `APPLY ${r.plan_id}`);
 		expect(a.ok).toBe(false);
-		expect(a.message).toMatch(/caducado/);
+		expect(a.message).toMatch(/caducado \(24 h\)/);
 		expect(ads.mutateCalls).toHaveLength(1);
 	});
 
