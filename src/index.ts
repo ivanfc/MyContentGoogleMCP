@@ -19,7 +19,7 @@ import {
 	buildNegativeKeywordsPlan,
 } from "./plans/builders";
 import { DG_CHANNELS, type DemandGenInput, buildDemandGenPlan } from "./plans/demandgen";
-import { type Deps, type PlanDraft, applyPlan, cancelPlan, createPlan, getAuditLog } from "./plans/engine";
+import { type Deps, type PlanDraft, applyPlan, cancelPlan, createPlan, getAuditLog, listPendingPlans } from "./plans/engine";
 import { buildGenericPlan } from "./plans/generic";
 import { accountHealthCheck } from "./tools/health";
 import { assertReadable, campaignDetail, campaignOverview, changeHistory, listAccessibleCustomers, networkBreakdown } from "./tools/read";
@@ -47,7 +47,7 @@ const campaignId = z.string().describe('ID numérico de campaña. Ej: "227146009
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/).describe("Fecha YYYY-MM-DD (zona horaria de la cuenta)");
 
 const PLAN_NOTE =
-	"Si el plan devuelve elevated (operaciones sensibles o destructivas), la confirmación es \"APPLY-ELEVATED <plan_id>\" y debes enseñar esos motivos al usuario antes de pedirle aprobación. NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 30 minutos.";
+	"Si el plan devuelve elevated (operaciones sensibles o destructivas), la confirmación es \"APPLY-ELEVATED <plan_id>\" y debes enseñar esos motivos al usuario antes de pedirle aprobación. NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 24 h; si se pierde el plan_id, list_pending_plans lo recupera.";
 
 export { PlanLock } from "./lock";
 
@@ -485,6 +485,13 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			'Ejecuta EXACTAMENTE las operaciones de un plan ya validado. confirm debe ser literalmente el confirm_with que devolvió el plan: "APPLY <plan_id>" o, si el plan tiene elevated, "APPLY-ELEVATED <plan_id>". SOLO debe llamarse cuando el usuario haya aprobado explícitamente el resumen (y los motivos elevated, si los hay). Si el estado de la cuenta cambió desde el plan, aborta. Deja registro de auditoría.',
 			{ plan_id: z.string(), confirm: z.string().describe('"APPLY <plan_id>" o "APPLY-ELEVATED <plan_id>" según confirm_with') },
 			async ({ plan_id, confirm }) => applyPlan(this.services().deps, plan_id, confirm),
+		);
+
+		this.tool(
+			"list_pending_plans",
+			"Planes creados y aún no aplicados ni caducados (24 h), más recientes primero: plan_id, cuenta, quién lo creó, cuándo caduca, confirm_with y resumen. Sirve para retomar una aprobación en otra conversación o si se perdió el plan_id. Antes de aplicar uno antiguo, enseña de nuevo el resumen al usuario.",
+			{ customer_id: customerId.optional() },
+			async ({ customer_id }) => listPendingPlans(this.services().deps, customer_id ? normalizeCustomerId(customer_id) : undefined),
 		);
 
 		this.tool("cancel_plan", "Descarta un plan pendiente sin aplicar nada.", { plan_id: z.string() }, async ({ plan_id }) => cancelPlan(this.services().deps, plan_id));

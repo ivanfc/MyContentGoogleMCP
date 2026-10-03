@@ -14,7 +14,7 @@ export class PlanLock extends DurableObject<Env> {
 		if (await this.ctx.storage.get(key)) return false;
 		const now = Date.now();
 		await this.ctx.storage.put(key, now);
-		// Limpieza perezosa: los planes caducan a los 30 min; los claims se guardan 2 h.
+		// Limpieza perezosa: el plan se borra al aplicarlo; el claim solo tiene que cubrir la ventana de caché de KV (~60 s), se guarda 2 h.
 		const old = await this.ctx.storage.list<number>({ prefix: "claim:" });
 		const expired = [...old].filter(([, t]) => now - t > CLAIM_TTL_MS).map(([k]) => k);
 		if (expired.length) await this.ctx.storage.delete(expired);

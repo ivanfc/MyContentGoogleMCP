@@ -17,9 +17,9 @@ Claude ──OAuth 2.1 (DCR/PKCE)──► Worker mycontent-google-ads-mcp
                                    │    ├─ src/tools/read.ts        herramientas de lectura
                                    │    ├─ src/plans/*.ts           constructores de planes (operaciones de mutate)
                                    │    ├─ src/guards.ts            barreras (allowlist, prohibiciones, límites)
-                                   │    └─ src/plans/engine.ts      plan → validateOnly → KV (30 min) → apply → auditoría
+                                   │    └─ src/plans/engine.ts      plan → validateOnly → KV (24 h) → apply → auditoría
                                    ├─ KV OAUTH_KV   estado OAuth (clientes, grants, tokens)
-                                   └─ KV STATE_KV   planes pendientes (TTL 30 min) y registro de auditoría
+                                   └─ KV STATE_KV   planes pendientes (TTL 24 h) y registro de auditoría
                                           │
                                           ▼  fetch REST + login-customer-id + Bearer (sin developer token)
                                  https://googleads.googleapis.com/v25/customers/{id}/googleAds:search|mutate
@@ -42,7 +42,7 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `get_campaign_detail(customer_id, campaign_id)` | Presupuesto (y si es compartido), ubicaciones incl./excl., idiomas, listas de marca, grupos (canales Demand Gen, geo/audiencias por grupo) o asset groups |
 | `get_network_breakdown(customer_id, date_from, date_to, campaign_ids?)` | Métricas por `segments.ad_network_type` |
 | `get_change_history(customer_id, days≤30)` | `change_event` |
-| `account_health_check(customer_id)` | Diagnóstico de solo lectura (~8 consultas): `{_parámetros}` de seguimiento que faltan en campañas o grupos activos, negativas que bloquean keywords activas, objetivos de conversión de cuenta "blandos" (interacciones/visualizaciones de YouTube, page views…), campañas activas que no sirven con normalidad (`primary_status`), anuncios rechazados o limitados y Demand Gen con segmentación optimizada |
+| `account_health_check(customer_id)` | Diagnóstico de solo lectura (~8 consultas): `{_parámetros}` de seguimiento que faltan en campañas o grupos activos, negativas que bloquean keywords activas, objetivos de conversión "blandos" efectivos en cada campaña activa (interacciones/visualizaciones de YouTube, page views…), campañas activas que no sirven con normalidad (`primary_status`), anuncios rechazados o limitados y Demand Gen con segmentación optimizada |
 | `get_asset_group_assets(customer_id, campaign_id)` | Assets de un PMax por `field_type`, incluidos logos/nombre de empresa a nivel de campaña (Brand Guidelines) |
 | `get_audit_log(limit)` | Registro de `apply_plan` |
 | `describe_api_method(method?, filter?)` | Catálogo de los 175 métodos de la API v25 (lectura y escritura), con ruta, si admiten `validateOnly`, herramienta a usar y campos del body |
@@ -62,6 +62,7 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `plan_generic_mutate` | Cualquiera de los 64 tipos de operación de `GoogleAdsService.Mutate` (create/update/remove, IDs temporales, todo o nada), en cualquier tipo de campaña |
 | `plan_api_call(customer_id, method, path_params, body_json, state_queries?)` | Cualquier método de escritura fuera del mutate general: recomendaciones, experimentos, Customer Match, conversiones offline, accesos, vínculos, facturación, subcuentas, assets autogenerados de PMax… |
 | `apply_plan(plan_id, confirm)` | `confirm` = el `confirm_with` del plan: `APPLY <plan_id>` o `APPLY-ELEVATED <plan_id>` |
+| `list_pending_plans(customer_id?)` | Planes pendientes (no aplicados ni caducados) con `confirm_with` y resumen: para retomar una aprobación en otra conversación |
 | `cancel_plan(plan_id)` | Descarta el plan |
 
 ### Demand Gen: cómo está implementado (verificado en el discovery doc v25)
@@ -85,7 +86,7 @@ Matriz de cambios verificados con `validateOnly` contra la cuenta real por tipo 
 
 Política (decidida por Iván el 02-10-2026): **todo lo que permite la API se puede hacer por el MCP**, con dos niveles de control.
 
-1. **Dos fases siempre**. Ningún `plan_*` escribe. El plan comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` (si el método lo admite) → guarda en `STATE_KV` 30 min. `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente lo guardado (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
+1. **Dos fases siempre**. Ningún `plan_*` escribe. El plan comprueba barreras → lee el estado de lo que toca (GAQL guardadas en el plan) y calcula su SHA-256 → valida con `validateOnly: true` (si el método lo admite) → guarda en `STATE_KV` 24 h (la aprobación humana puede tardar; lo que protege de un estado distinto es el hash). `apply_plan` re-evalúa barreras, re-lee el estado y **aborta si el hash cambió**, ejecuta exactamente lo guardado (`partialFailure: false`, todo o nada) y borra el plan (un solo uso).
 2. **Bloqueo duro (sin excepciones)**: escribir en cuentas fuera de `ALLOWED_CUSTOMER_IDS` (con `*`, cuentas que no cuelgan de la MCC), operaciones que referencian otra cuenta y operaciones mal formadas. La lectura se limita a la MCC y sus hijas.
 3. **Confirmación reforzada (`APPLY-ELEVATED <plan_id>`)**: el plan se crea y valida igual, pero lista los motivos y exige la frase reforzada. Aplica a:
    - borrados de campañas, grupos, anuncios, presupuestos, asset groups, listas, etiquetas, audiencias… y `status: REMOVED`;
