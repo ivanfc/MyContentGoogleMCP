@@ -51,8 +51,21 @@ const PLAN_NOTE =
 
 export { PlanLock } from "./lock";
 
+/**
+ * Contrato de respuesta para cualquier cliente (Claude, Cowork, Codex…): qué es "hecho", qué no, y cómo decirlo.
+ * El MCP solo lee y escribe en Google Ads; documentar, reportar o planificar campañas es trabajo del agente.
+ */
+const SERVER_INSTRUCTIONS = `Google Ads (lectura y escritura) vía la API oficial.
+Reglas:
+1. Nada está hecho hasta que apply_plan devuelve ok:true. Un plan_* solo valida (validateOnly) y no cambia la cuenta. Las operaciones de un plan se aplican todas o ninguna.
+2. Si una petición no se puede hacer, dilo claramente y con el motivo exacto: no existe herramienta u operación para ello, la API no lo permite para ese tipo de campaña (el error lo indica), falta permiso o acceso de la cuenta, o una barrera lo bloquea. No lo presentes como hecho ni lo sustituyas por otra cosa sin decirlo.
+3. Si se hizo solo una parte de lo pedido (por ejemplo, un plan que cubre 3 de 4 cambios), enumera lo que NO se hizo y por qué.
+4. Antes de aplicar, enseña el resumen del plan y, si tiene elevated, sus motivos; aplica solo con aprobación explícita del usuario usando exactamente confirm_with.
+5. La API omite los valores por defecto (false, 0, ""): ausente no significa desconocido (ver omitted_fields en gaql_search).
+6. Para construir operaciones no previstas por las herramientas específicas, usa describe_mutate_operation / describe_api_method (esquema oficial) en lugar de inventar campos.`;
+
 export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
-	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" });
+	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
 
 	private services() {
 		const missing = missingSecrets(this.env as unknown as Record<string, unknown>);
