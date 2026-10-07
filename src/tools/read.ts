@@ -21,7 +21,11 @@ interface AccountInfo {
 
 /** Caché por ámbito (MCC del propietario o usuario): nunca se mezclan cuentas de usuarios distintos. */
 const scopes = new Map<string, AccountScope>();
-const SCOPE_TTL_MS = 10 * 60_000;
+/**
+ * Propietario: 1 consulta por recarga (10 min). Usuario: 1 + una por cada cuenta/MCC raíz, que sale de SU cuota
+ * diaria; con 10 min, alguien con 20 cuentas directas gastaba ~1.000 operaciones al día solo en recargas.
+ */
+const SCOPE_TTL_MS = { mcc: 10 * 60_000, user: 60 * 60_000 };
 const MAX_ROOTS = 50;
 
 export function _resetChildCache() {
@@ -77,7 +81,7 @@ async function loadScope(client: GoogleAdsClient, limits: Limits): Promise<Accou
 			}
 		}
 	}
-	return { ids: new Set(list.map((a) => a.customer_id)), logins, list, expiresAt: Date.now() + SCOPE_TTL_MS };
+	return { ids: new Set(list.map((a) => a.customer_id)), logins, list, expiresAt: Date.now() + SCOPE_TTL_MS[limits.mode] };
 }
 
 async function scopeFor(client: GoogleAdsClient, limits: Limits): Promise<AccountScope> {
