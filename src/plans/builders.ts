@@ -414,7 +414,8 @@ export async function buildExcludePlacementsPlan(
 
 export function customAudienceBody(name: string, searchTerms: string[], urls: string[] = []): Json {
 	const terms = [...new Set(searchTerms.map((s) => s.trim()).filter(Boolean))];
-	const cleanUrls = [...new Set(urls.map((s) => s.trim()).filter(Boolean))];
+	// Un dominio suelto ("aparcand.com") se acepta como https://aparcand.com (visto en uso real).
+	const cleanUrls = [...new Set(urls.map((s) => s.trim()).filter(Boolean).map((u) => (/^[\w.-]+\.[a-z]{2,}(\/\S*)?$/i.test(u) ? `https://${u}` : u)))];
 	if (!terms.length && !cleanUrls.length) throw new Error("El segmento personalizado necesita al menos una búsqueda o una URL.");
 	for (const t of terms) if (t.length > 80 || t.split(/\s+/).length > 10) throw new Error(`Término demasiado largo (máx. 10 palabras / 80 caracteres): "${t}"`);
 	for (const u of cleanUrls) if (!/^https?:\/\//.test(u)) throw new Error(`URL sin protocolo: "${u}" (usa https://...)`);

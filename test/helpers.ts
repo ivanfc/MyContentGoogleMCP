@@ -40,6 +40,13 @@ export class FakeAds {
 	tokenCalls = 0;
 	lastHeaders?: Record<string, string>;
 
+	fieldSearches: SearchHandler[] = [];
+	fieldQueries: string[] = [];
+	onFields(match: RegExp, rows: Json[] | (() => Json[])) {
+		this.fieldSearches.unshift({ match, rows });
+		return this;
+	}
+
 	on(match: RegExp, rows: Json[] | (() => Json[])) {
 		this.searches.unshift({ match, rows });
 		return this;
@@ -58,6 +65,11 @@ export class FakeAds {
 			if (this.serviceError) return Response.json(this.serviceError.body, { status: this.serviceError.status });
 			if (body.validateOnly) return Response.json({});
 			return Response.json({ results: body.operations.map((_: Json, i: number) => ({ resourceName: `customers/${svc[1]}/customAudiences/${900 + i}` })) });
+		}
+		if (url.endsWith("/googleAdsFields:search")) {
+			this.fieldQueries.push(body.query);
+			const h = this.fieldSearches.find((s) => s.match.test(body.query));
+			return Response.json({ results: h ? (typeof h.rows === "function" ? h.rows() : h.rows) : [] });
 		}
 		const m = url.match(/customers\/(\d+)\/googleAds:(search|mutate)$/);
 		if (!m) return new Response("not found", { status: 404 });

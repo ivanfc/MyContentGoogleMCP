@@ -42,6 +42,7 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `get_campaign_detail(customer_id, campaign_id)` | Presupuesto (y si es compartido), ubicaciones incl./excl., idiomas, listas de marca, grupos (canales Demand Gen, geo/audiencias por grupo) o asset groups |
 | `get_network_breakdown(customer_id, date_from, date_to, campaign_ids?)` | Métricas por `segments.ad_network_type` |
 | `get_change_history(customer_id, days≤30)` | `change_event` |
+| `describe_gaql_fields(resource, filter?)` | Esquema GAQL oficial (GoogleAdsFieldService, en caché 7 días): atributos, recursos relacionados, segmentos y métricas compatibles con `FROM resource` y valores de enum. Además, cuando `gaql_search` falla por un campo inexistente, incompatible o un enum mal escrito, el error incluye una **Pista** con campos parecidos o valores válidos |
 | `account_health_check(customer_id)` | Diagnóstico de solo lectura (~8 consultas): `{_parámetros}` de seguimiento que faltan en campañas o grupos activos, negativas que bloquean keywords activas, objetivos de conversión "blandos" efectivos en cada campaña activa (interacciones/visualizaciones de YouTube, page views…), campañas activas que no sirven con normalidad (`primary_status`), anuncios rechazados o limitados y Demand Gen con segmentación optimizada |
 | `get_asset_group_assets(customer_id, campaign_id)` | Assets de un PMax por `field_type`, incluidos logos/nombre de empresa a nivel de campaña (Brand Guidelines) |
 | `get_audit_log(limit)` | Registro de `apply_plan` |

@@ -94,13 +94,20 @@ function stripVolatile(row: Json): Json {
 }
 
 export async function computeStateHash(client: GoogleAdsClient, customerId: string, queries: string[]): Promise<string> {
-	const parts: string[] = [];
-	for (const q of queries) {
-		const { rows, truncated } = await client.search(customerId, q);
-		// Un estado truncado haría el hash arbitrario (falsos "estado cambiado" o cambios no detectados).
-		if (truncated) throw new Error(`La lectura de estado devuelve más de 10.000 filas y no se puede comprobar de forma fiable: ${q.slice(0, 160)}… Divide el cambio en planes más pequeños.`);
-		parts.push(JSON.stringify(rows.map((r) => JSON.stringify(stripVolatile(r))).sort()));
-	}
+	// En paralelo (máx. 4 a la vez) y en el orden original de las consultas.
+	const parts: string[] = new Array(queries.length);
+	let next = 0;
+	const worker = async () => {
+		while (next < queries.length) {
+			const i = next++;
+			const q = queries[i];
+			const { rows, truncated } = await client.search(customerId, q);
+			// Un estado truncado haría el hash arbitrario (falsos "estado cambiado" o cambios no detectados).
+			if (truncated) throw new Error(`La lectura de estado devuelve más de 10.000 filas y no se puede comprobar de forma fiable: ${q.slice(0, 160)}… Divide el cambio en planes más pequeños.`);
+			parts[i] = JSON.stringify(rows.map((r) => JSON.stringify(stripVolatile(r))).sort());
+		}
+	};
+	await Promise.all(Array.from({ length: Math.min(4, queries.length) }, worker));
 	return sha256(parts.join("\n"));
 }
 

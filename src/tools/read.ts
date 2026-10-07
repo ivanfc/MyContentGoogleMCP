@@ -201,7 +201,9 @@ export async function networkBreakdown(client: GoogleAdsClient, cid: string, dat
 export async function changeHistory(client: GoogleAdsClient, cid: string, days: number) {
 	if (!Number.isInteger(days) || days < 1 || days > 30) throw new Error("days debe ser un entero entre 1 y 30.");
 	const to = new Date();
-	const from = new Date(to.getTime() - days * 86400_000);
+	// change_event solo admite los últimos 30 días contados en la zona de la cuenta: con days=30 exactos Google
+	// devolvía START_DATE_TOO_OLD (visto en uso real). Se acota a 29 días completos + hoy.
+	const from = new Date(to.getTime() - Math.min(days, 29) * 86400_000);
 	const fmt = (d: Date) => d.toISOString().slice(0, 10);
 	const rows = await client.searchAll(
 		cid,

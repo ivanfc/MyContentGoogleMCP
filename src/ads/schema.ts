@@ -80,6 +80,14 @@ export function describeOperation(discovery: Json, operation: string, depth = 2,
 	const schemas = discovery.schemas;
 	const opRef = (discovery.schemas[`${PREFIX}Services__MutateOperation`]?.properties ?? {})[operation]?.$ref as string | undefined;
 	if (!opRef) {
+		// Algunos recursos tienen su propio servicio de mutate fuera de GoogleAdsService.Mutate (p. ej. customAudiences).
+		const plural = operation.replace(/Operation$/, "").replace(/y$/, "ie").concat("s");
+		const service = discovery.resources?.customers?.resources?.[plural]?.methods?.mutate?.id as string | undefined;
+		if (service) {
+			throw new Error(
+				`${operation} no forma parte del mutate general (GoogleAdsService.Mutate): tiene su propio servicio ${service.replace(/^googleads\./, "")}. Usa describe_api_method("${service.replace(/^googleads\./, "")}") y plan_api_call${operation === "customAudienceOperation" ? ", o plan_create_custom_audience" : ""}.`,
+			);
+		}
 		throw new Error(`Operación desconocida: ${operation}. Llama a describe_mutate_operation sin argumentos para ver la lista.`);
 	}
 	const op = schemas[opRef];
