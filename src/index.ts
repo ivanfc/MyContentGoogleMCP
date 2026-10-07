@@ -2,7 +2,8 @@ import OAuthProvider from "@cloudflare/workers-oauth-provider";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { McpAgent } from "agents/mcp";
 import { z } from "zod";
-import { GoogleAdsClient, GoogleAdsApiError } from "./ads/client";
+import { GoogleAdsClient, GoogleAdsApiError, type Json } from "./ads/client";
+import { describeGaqlFields, gaqlHint } from "./ads/fields";
 import { OMITTED_NOTE, omittedFields } from "./ads/gaql";
 import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
 import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId } from "./config";
@@ -62,7 +63,7 @@ Reglas:
 3. Si se hizo solo una parte de lo pedido (por ejemplo, un plan que cubre 3 de 4 cambios), enumera lo que NO se hizo y por qué.
 4. Antes de aplicar, enseña el resumen del plan y, si tiene elevated, sus motivos; aplica solo con aprobación explícita del usuario usando exactamente confirm_with.
 5. La API omite los valores por defecto (false, 0, ""): ausente no significa desconocido (ver omitted_fields en gaql_search).
-6. Para construir operaciones no previstas por las herramientas específicas, usa describe_mutate_operation / describe_api_method (esquema oficial) en lugar de inventar campos.`;
+6. Para construir operaciones no previstas por las herramientas específicas, usa describe_mutate_operation / describe_api_method (esquema oficial), y para consultas GAQL describe_gaql_fields, en lugar de inventar campos.`;
 
 export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
@@ -119,8 +120,11 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			try {
 				const data = await handler(args);
 				const result = ok(data);
-				if (result.isError) log("rejected", new Error(String((data as { stage?: string; message?: string }).stage ?? (data as { message?: string }).message ?? "")));
-				else log("ok");
+				if (result.isError) {
+					const d = data as { stage?: string; message?: string };
+					const codes = [...new Set([...(d.message ?? "").matchAll(/\[([A-Za-z]+Error\.[A-Z_]+)\]/g)].map((m) => m[1]))].slice(0, 5);
+					log("rejected", new Error(`${d.stage ?? "rejected"}${codes.length ? `: ${codes.join(", ")}` : `: ${(d.message ?? "").slice(0, 160)}`}`));
+				} else log("ok");
 				return result;
 			} catch (e) {
 				log("error", e);
@@ -149,12 +153,21 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 
 		this.tool(
 			"gaql_search",
-			`Ejecuta una consulta GAQL libre (solo lectura) con paginación automática. Importes en micros (divide entre 1.000.000). OJO: la API omite en la respuesta los campos con valor por defecto (false, 0, "", UNSPECIFIED); la respuesta lista en omitted_fields los campos pedidos que faltan (ausente = valor por defecto o no definido, NO "sin dato"). Para filtrar booleanos falsos usa != TRUE (= FALSE puede no devolver filas). change_event exige acotar change_event.change_date_time por los dos lados. Ej: query="SELECT campaign.id, campaign.name, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS". max_rows por defecto ${DEFAULT_MAX_ROWS}, máximo ${HARD_MAX_ROWS}.`,
+			`Ejecuta una consulta GAQL libre (solo lectura) con paginación automática. Importes en micros (divide entre 1.000.000). OJO: la API omite en la respuesta los campos con valor por defecto (false, 0, "", UNSPECIFIED); la respuesta lista en omitted_fields los campos pedidos que faltan (ausente = valor por defecto o no definido, NO "sin dato"). Para filtrar booleanos falsos usa != TRUE (= FALSE puede no devolver filas). change_event exige acotar change_event.change_date_time por los dos lados. Si no conoces con certeza un campo, su compatibilidad con el FROM o los valores de un enum, consulta antes describe_gaql_fields; si la consulta falla, el error incluye una "Pista" con campos parecidos o valores válidos. Ej: query="SELECT campaign.id, campaign.name, metrics.cost_micros FROM campaign WHERE segments.date DURING LAST_7_DAYS". max_rows por defecto ${DEFAULT_MAX_ROWS}, máximo ${HARD_MAX_ROWS}.`,
 			{ customer_id: customerId, query: z.string().describe("Consulta GAQL"), max_rows: z.number().int().min(1).max(HARD_MAX_ROWS).optional() },
 			async ({ customer_id, query, max_rows }) => {
 				const { client, limits } = this.services();
 				const cid = await assertReadable(client, limits, customer_id);
-				const { rows, truncated } = await client.search(cid, query, max_rows ?? DEFAULT_MAX_ROWS);
+				let found: { rows: Json[]; truncated: boolean };
+				try {
+					found = await client.search(cid, query, max_rows ?? DEFAULT_MAX_ROWS);
+				} catch (e) {
+					// Pista con el esquema real (campos parecidos, compatibilidad con el FROM, valores de enum).
+					const hint = await gaqlHint(client, this.env.STATE_KV, query, e);
+					if (hint && e instanceof Error) e.message = `${e.message}\n\nPista:\n${hint}`;
+					throw e;
+				}
+				const { rows, truncated } = found;
 				const omitted = omittedFields(query, rows);
 				return {
 					row_count: rows.length,
@@ -202,6 +215,16 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			async ({ customer_id, days }) => {
 				const { client, limits } = this.services();
 				return changeHistory(client, await assertReadable(client, limits, customer_id), days);
+			},
+		);
+
+		this.tool(
+			"describe_gaql_fields",
+			"Esquema GAQL oficial de un recurso (GoogleAdsFieldService): atributos seleccionables, recursos relacionados, segmentos y métricas compatibles con FROM <resource>, y valores de enum de los campos que coinciden con filter. Úsalo ANTES de escribir una consulta con campos que no conozcas con certeza (evita UNRECOGNIZED_FIELD, PROHIBITED_FIELD_IN_SELECT_CLAUSE, BAD_ENUM_CONSTANT). Ej: resource=\"ad_group_ad\", filter=\"policy\".",
+			{ resource: z.string().describe("Recurso GAQL del FROM, p. ej. campaign, ad_group_ad, keyword_view, search_term_view"), filter: z.string().optional() },
+			async ({ resource, filter }) => {
+				const { client } = this.services();
+				return describeGaqlFields(client, this.env.STATE_KV, resource, filter);
 			},
 		);
 
@@ -529,6 +552,13 @@ export default {
 			clientRegistrationEndpoint: "/register",
 			defaultHandler: GoogleHandler as any,
 			tokenEndpoint: "/token",
+			// Sesiones de los clientes MCP (Claude, Cowork, Codex). Visto en logs (04-07/10/2026): Codex renovaba cada hora
+			// y, con varias instancias compartiendo credenciales, la rotación de refresh tokens las dejaba sin sesión
+			// (POST /token → 400 invalid_grant). Con 8 h se renueva 8 veces menos; con caducidad por inactividad, una
+			// sesión que se usa no caduca (antes: 30 días fijos desde el login, aunque se usara a diario).
+			accessTokenTTL: 8 * 3600,
+			refreshTokenTTL: 90 * 24 * 3600,
+			refreshTokenIdleTTL: 30 * 24 * 3600,
 			resourceMetadata: {
 				resource: (env.PUBLIC_BASE_URL || new URL(request.url).origin).replace(/\/$/, "").toLowerCase(),
 				resource_name: "MyContent Google Ads MCP",

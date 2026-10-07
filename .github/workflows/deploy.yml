@@ -13,6 +13,10 @@ on:
         description: "Ejecutar integración contra la cuenta real (solo lectura + validateOnly)"
         type: boolean
         default: true
+      oauth_check:
+        description: "Diagnóstico: ¿los clientes OAuth de login y de Ads son del mismo proyecto de Google Cloud? (solo imprime números de proyecto)"
+        type: boolean
+        default: false
       integration_scope:
         description: "smoke = solo lectura y planes básicos (pocas operaciones de API); full = cobertura completa (cientos de operaciones, consume cuota diaria)"
         type: choice
@@ -108,3 +112,18 @@ jobs:
       - name: Integración (${{ inputs.integration_scope }})
         run: |
           if [ "${{ inputs.integration_scope }}" = "full" ]; then npm run integration; else npm run integration -- integration/real-account.test.ts; fi
+
+  oauth-check:
+    if: github.event_name == 'workflow_dispatch' && inputs.oauth_check
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Proyecto de cada cliente OAuth (el ID empieza por el número de proyecto)
+        env:
+          ADS: ${{ secrets.GOOGLE_ADS_CLIENT_ID }}
+          LOGIN: ${{ secrets.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          a="${ADS%%-*}"; l="${LOGIN%%-*}"
+          echo "proyecto cliente Ads:   P${a}"
+          echo "proyecto cliente login: P${l}"
+          if [ "$a" = "$l" ]; then echo "MISMO PROYECTO: si"; else echo "MISMO PROYECTO: no"; fi
