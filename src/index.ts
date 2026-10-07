@@ -106,7 +106,15 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			perUser: Number(this.env.QUOTA_DAILY_PER_USER || 1000),
 		};
 		client.beforeRequest = async (n) => {
-			const r = await quota.consume(email.toLowerCase(), owner, n, cfg);
+			let r: { ok: boolean; reason?: string };
+			try {
+				r = await quota.consume(email.toLowerCase(), owner, n, cfg);
+			} catch (e) {
+				// Si el contador no responde, el propietario sigue trabajando (Google ya limita); los invitados no.
+				console.error(JSON.stringify({ evt: "quota_error", owner, error: (e as Error).message }));
+				if (owner) return;
+				throw new Error("No se pudo comprobar la cuota diaria. Inténtalo de nuevo en unos segundos.");
+			}
 			if (!r.ok) throw new Error(r.reason);
 		};
 		const deps: Deps = {
