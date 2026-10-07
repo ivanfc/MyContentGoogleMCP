@@ -33,6 +33,14 @@ export interface AdsEnv {
 }
 
 export interface Limits {
+	/**
+	 * Modo "mcc" (propietario): credenciales del Worker y una MCC fija (GOOGLE_ADS_LOGIN_CUSTOMER_ID).
+	 * Modo "user" (cualquier otro usuario): su propio token de Google; solo ve las cuentas a las que su usuario
+	 * de Google tiene acceso (directas o a través de sus MCC). loginCustomerId queda vacío.
+	 */
+	mode: "mcc" | "user";
+	/** Clave de caché/aislamiento de cuentas (MCC o usuario). */
+	scopeKey: string;
 	loginCustomerId: string;
 	allowedCustomerIds: Set<string>;
 	/** ALLOWED_CUSTOMER_IDS="*": cualquier cuenta de la jerarquía de la MCC (se verifica contra la API antes de escribir). */
@@ -74,6 +82,8 @@ function parsePositiveNumber(value: string | undefined, fallback: number, name: 
 export function getLimits(env: Pick<AdsEnv, "GOOGLE_ADS_LOGIN_CUSTOMER_ID" | "ALLOWED_CUSTOMER_IDS" | "MAX_DAILY_BUDGET" | "MAX_BUDGET_INCREASE_PCT">): Limits {
 	const ids = parseList(env.ALLOWED_CUSTOMER_IDS);
 	return {
+		mode: "mcc",
+		scopeKey: `mcc:${normalizeCustomerId(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID)}`,
 		loginCustomerId: normalizeCustomerId(env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
 		allowedCustomerIds: new Set(ids.filter((x) => x !== "*").map(normalizeCustomerId)),
 		allowAllUnderMcc: ids.includes("*"),
@@ -103,4 +113,17 @@ export function toMicros(amount: number): number {
 export function fromMicros(micros: number | string | undefined | null): number {
 	if (micros === undefined || micros === null || micros === "") return 0;
 	return Number(micros) / 1_000_000;
+}
+
+/** Límites de un usuario que entra con su propia cuenta de Google: puede escribir en las cuentas a las que tiene acceso. */
+export function userLimits(env: Pick<AdsEnv, "MAX_DAILY_BUDGET" | "MAX_BUDGET_INCREASE_PCT">, email: string): Limits {
+	return {
+		mode: "user",
+		scopeKey: `user:${email.toLowerCase()}`,
+		loginCustomerId: "",
+		allowedCustomerIds: new Set(),
+		allowAllUnderMcc: true,
+		maxDailyBudget: parsePositiveNumber(env.MAX_DAILY_BUDGET, 60, "MAX_DAILY_BUDGET"),
+		maxBudgetIncreasePct: parsePositiveNumber(env.MAX_BUDGET_INCREASE_PCT, 100, "MAX_BUDGET_INCREASE_PCT"),
+	};
 }

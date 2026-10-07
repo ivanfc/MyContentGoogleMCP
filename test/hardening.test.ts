@@ -94,7 +94,7 @@ describe("apply_plan robusto", () => {
 		const { deps, kv, planId } = await budgetPlan();
 		const put = kv.put.bind(kv);
 		kv.put = async (key: string, value: string, opts?: { expirationTtl?: number }) => {
-			if (key.startsWith("audit:")) throw new Error("KV write limit");
+			if (key.startsWith("auditu:")) throw new Error("KV write limit");
 			return put(key, value, opts);
 		};
 		const a = await applyPlan(deps, planId, `APPLY ${planId}`);

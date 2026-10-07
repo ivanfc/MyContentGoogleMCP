@@ -4,7 +4,7 @@ Servidor MCP remoto (Cloudflare Workers) para **leer y modificar** cuentas de Go
 
 - Endpoint MCP: `https://googleads-mcp.mycontent.academy/mcp` (Streamable HTTP) y `https://googleads-mcp.mycontent.academy/sse` (legacy SSE).
 - Google Ads API **v25** por REST (`fetch`), fijada en `GOOGLE_ADS_API_VERSION` (`src/config.ts`).
-- Login OAuth 2.1 con Google; solo entran los emails de `ALLOWED_EMAILS`.
+- Login OAuth 2.1 con Google; entran los emails de `ALLOWED_EMAILS` (`*` = cualquier cuenta de Google). Cada usuario solo ve y modifica **sus** cuentas de Google Ads (ver «Multiusuario»).
 - Toda escritura en dos fases: `plan_*` (lee estado + `validateOnly`) → `apply_plan` (confirmación literal + verificación de que nada ha cambiado + auditoría).
 
 ## Arquitectura
@@ -26,7 +26,23 @@ Claude ──OAuth 2.1 (DCR/PKCE)──► Worker mycontent-google-ads-mcp
 ```
 
 - **Quién usa el conector**: el usuario que hace login con Google (email verificado y en `ALLOWED_EMAILS`). Se re-comprueba en cada llamada a herramienta, así que quitar un email corta el acceso aunque tenga un token vigente.
-- **En nombre de quién actúa**: una cuenta con acceso a la MCC, mediante `GOOGLE_ADS_REFRESH_TOKEN` (scope `https://www.googleapis.com/auth/adwords`). El access token se cachea en memoria del isolate hasta 1 min antes de caducar.
+- **En nombre de quién actúa**:
+  - Propietario (`OWNER_EMAILS`): la cuenta de la MCC `GOOGLE_ADS_LOGIN_CUSTOMER_ID`, mediante `GOOGLE_ADS_REFRESH_TOKEN` (scope `adwords`).
+  - Cualquier otro usuario: **su propio** permiso de Google Ads, concedido en la pantalla de Google al conectar. El refresh token va dentro de las props del grant, que el proveedor OAuth guarda cifradas con una clave derivada del token del usuario.
+  - El access token se cachea en memoria del isolate (por refresh token) hasta 1 min antes de caducar.
+
+### Multiusuario
+
+| | Propietario (`OWNER_EMAILS`) | Resto de usuarios |
+|---|---|---|
+| Credenciales | Las del Worker (MCC) | Las suyas (OAuth con scope `adwords`) |
+| Cuentas visibles | Jerarquía de la MCC (`customer_client`) | `listAccessibleCustomers` + jerarquía de cada MCC suya (máx. 50 raíces); `login-customer-id` por cuenta |
+| Planes y auditoría | Los suyos (+ auditoría anterior a multiusuario) | Solo los suyos (otro usuario recibe «no existe») |
+| Cuota diaria (`get_quota_usage`) | `QUOTA_DAILY_TOTAL` (14.000) | `QUOTA_DAILY_PER_USER` (1.000) y, entre todos los invitados, `QUOTA_DAILY_OTHERS` (5.000) |
+
+- La cuota es de operaciones de la API (cada página GAQL = 1; cada operación de un mutate o validación = 1), día natural UTC, en un Durable Object global (`UsageQuota`). La API de Google (Basic) da 15.000/día por proyecto en ventana móvil de 24 h: el total se deja por debajo para que el propietario nunca se quede sin cuota por culpa de otros.
+- Las barreras (presupuesto máximo, subida máxima, confirmación reforzada) se aplican igual a todos.
+- Requisito para invitados: la pantalla de consentimiento OAuth del proyecto de Google Cloud debe estar «En producción» con el scope `adwords` declarado; si está en «Testing», solo entran los usuarios de prueba y sus refresh tokens caducan a los 7 días.
 - **Por qué REST**: la librería `google-ads-api` usa gRPC, que no funciona en Workers.
 - `agents@0.24` marca `McpAgent` como *feature-frozen* (recomienda `createMcpHandler`). Se usa `McpAgent` porque lo exige el diseño y es lo que da `/sse`; migrar es un cambio local en `src/index.ts`.
 
@@ -45,7 +61,8 @@ Importes de entrada siempre en **moneda de la cuenta** (p. ej. `10` = 10,00 EUR/
 | `describe_gaql_fields(resource, filter?)` | Esquema GAQL oficial (GoogleAdsFieldService, en caché 7 días): atributos, recursos relacionados, segmentos y métricas compatibles con `FROM resource` y valores de enum. Además, cuando `gaql_search` falla por un campo inexistente, incompatible o un enum mal escrito, el error incluye una **Pista** con campos parecidos o valores válidos |
 | `account_health_check(customer_id)` | Diagnóstico de solo lectura (~8 consultas): `{_parámetros}` de seguimiento que faltan en campañas o grupos activos, negativas que bloquean keywords activas, objetivos de conversión "blandos" efectivos en cada campaña activa (interacciones/visualizaciones de YouTube, page views…), campañas activas que no sirven con normalidad (`primary_status`), anuncios rechazados o limitados y Demand Gen con segmentación optimizada |
 | `get_asset_group_assets(customer_id, campaign_id)` | Assets de un PMax por `field_type`, incluidos logos/nombre de empresa a nivel de campaña (Brand Guidelines) |
-| `get_audit_log(limit)` | Registro de `apply_plan` |
+| `get_audit_log(limit)` | Registro de `apply_plan` (solo el del usuario) |
+| `get_quota_usage()` | Operaciones de la API consumidas hoy y límites del usuario |
 | `describe_api_method(method?, filter?)` | Catálogo de los 175 métodos de la API v25 (lectura y escritura), con ruta, si admiten `validateOnly`, herramienta a usar y campos del body |
 | `api_read(method, path_params, body_json)` | Cualquier método de solo lectura que no es GAQL: Keyword Planner (ideas, históricos, previsiones), reach forecast, audience insights, benchmarks, previsualizaciones, generación de textos/imágenes, facturas… |
 | `describe_mutate_operation(operation?, filter?)` | Esquema oficial de la v25: lista de operaciones de mutate con su estado en las barreras y campos modificables de cada recurso, para usar `plan_generic_mutate` en cualquier tipo de campaña sin inventar campos |
@@ -180,7 +197,7 @@ Configuración actual: `ALLOWED_CUSTOMER_IDS="*"`, es decir, se puede escribir e
 Para restringir a una lista concreta, sustituye `*` por los IDs separados por comas, sin guiones (p. ej. `"8460514008,1234567890"`), y despliega. Se pueden combinar (`"*,8460514008"`), aunque con `*` la lista no añade nada.
 
 ### Añadir o quitar usuarios
-Edita `ALLOWED_EMAILS` y despliega. Quitar un email bloquea sus llamadas a herramientas de inmediato (se comprueba en cada llamada).
+Edita `ALLOWED_EMAILS` y despliega (configuración actual: `*`). Con una lista explícita, quitar un email bloquea sus llamadas a herramientas de inmediato (se comprueba en cada llamada). Ajusta los topes con `QUOTA_DAILY_*`.
 
 ### Revocar el acceso
 - Un usuario: quítalo de `ALLOWED_EMAILS` y despliega.
@@ -193,7 +210,7 @@ Edita `ALLOWED_EMAILS` y despliega. Quitar un email bloquea sus llamadas a herra
 - En claude.ai: Settings → Connectors → desconectar.
 
 ### Auditoría
-`get_audit_log` desde Claude, o `npx wrangler kv key list --binding STATE_KV --remote --prefix audit:`.
+`get_audit_log` desde Claude (cada usuario ve solo lo suyo), o `npx wrangler kv key list --binding STATE_KV --remote --prefix auditu:` (claves `auditu:<sha256(email)[0:16]>:…`; el registro anterior a multiusuario sigue en `audit:`).
 
 ## Supuestos y límites conocidos
 

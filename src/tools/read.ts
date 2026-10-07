@@ -1,41 +1,112 @@
 import { type GoogleAdsClient, type Json, assertDate, assertId } from "../ads/client";
 import { type Limits, fromMicros, isWriteAllowed, normalizeCustomerId } from "../config";
 
-let childCache: { ids: Set<string>; expiresAt: number } | undefined;
+interface AccountScope {
+	ids: Set<string>;
+	logins: Map<string, string>;
+	list: AccountInfo[];
+	expiresAt: number;
+}
+interface AccountInfo {
+	customer_id: string;
+	name: string;
+	currency?: string;
+	time_zone?: string;
+	manager: boolean;
+	status?: string;
+	level: number;
+	via_manager?: string;
+	write_allowed: boolean;
+}
+
+/** Caché por ámbito (MCC del propietario o usuario): nunca se mezclan cuentas de usuarios distintos. */
+const scopes = new Map<string, AccountScope>();
+const SCOPE_TTL_MS = 10 * 60_000;
+const MAX_ROOTS = 50;
 
 export function _resetChildCache() {
-	childCache = undefined;
+	scopes.clear();
+}
+
+const CLIENT_QUERY =
+	"SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.status, customer_client.level FROM customer_client";
+
+function toInfo(c: Json, limits: Limits, viaManager?: string): AccountInfo {
+	const id = String(c.id);
+	return {
+		customer_id: id,
+		name: c.descriptiveName ?? "",
+		currency: c.currencyCode,
+		time_zone: c.timeZone,
+		manager: Boolean(c.manager),
+		status: c.status,
+		level: Number(c.level ?? 0),
+		...(viaManager ? { via_manager: viaManager } : {}),
+		write_allowed: isWriteAllowed(limits, id),
+	};
+}
+
+async function loadScope(client: GoogleAdsClient, limits: Limits): Promise<AccountScope> {
+	const list: AccountInfo[] = [];
+	const logins = new Map<string, string>();
+	if (limits.mode === "mcc") {
+		for (const r of await client.searchAll(limits.loginCustomerId, CLIENT_QUERY)) list.push(toInfo(r.customerClient, limits));
+	} else {
+		// Cuentas a las que el usuario de Google tiene acceso directo; las MCC aportan además su jerarquía.
+		const roots = (await client.listAccessibleCustomers()).map((rn) => rn.split("/").pop()!).slice(0, MAX_ROOTS);
+		const seen = new Set<string>();
+		for (const root of roots) {
+			client.setLogins(new Map([[root, root]]));
+			let rows: Json[];
+			try {
+				rows = await client.searchAll(root, CLIENT_QUERY);
+			} catch {
+				continue; // cuentas canceladas o sin permiso de lectura: se omiten
+			}
+			for (const r of rows) {
+				const id = String(r.customerClient.id);
+				// Acceso directo tiene prioridad; si no, a través de la primera MCC que la contiene.
+				if (seen.has(id) && !(roots.includes(id) && id === root)) continue;
+				const direct = id === root;
+				logins.set(id, direct ? id : root);
+				const prev = list.findIndex((a) => a.customer_id === id);
+				const info = toInfo(r.customerClient, limits, direct ? undefined : root);
+				if (prev >= 0) list[prev] = info;
+				else list.push(info);
+				seen.add(id);
+			}
+		}
+	}
+	return { ids: new Set(list.map((a) => a.customer_id)), logins, list, expiresAt: Date.now() + SCOPE_TTL_MS };
+}
+
+async function scopeFor(client: GoogleAdsClient, limits: Limits): Promise<AccountScope> {
+	let sc = scopes.get(limits.scopeKey);
+	if (!sc || sc.expiresAt < Date.now()) {
+		sc = await loadScope(client, limits);
+		scopes.set(limits.scopeKey, sc);
+	}
+	client.setLogins(sc.logins);
+	return sc;
 }
 
 export async function listAccessibleCustomers(client: GoogleAdsClient, limits: Limits) {
-	const rows = await client.searchAll(
-		limits.loginCustomerId,
-		"SELECT customer_client.id, customer_client.descriptive_name, customer_client.currency_code, customer_client.time_zone, customer_client.manager, customer_client.status, customer_client.level FROM customer_client",
-	);
-	const list = rows.map((r) => {
-		const c = r.customerClient;
-		const id = String(c.id);
-		return {
-			customer_id: id,
-			name: c.descriptiveName ?? "",
-			currency: c.currencyCode,
-			time_zone: c.timeZone,
-			manager: Boolean(c.manager),
-			status: c.status,
-			level: Number(c.level ?? 0),
-			write_allowed: isWriteAllowed(limits, id),
-		};
-	});
-	childCache = { ids: new Set(list.map((c) => c.customer_id)), expiresAt: Date.now() + 10 * 60_000 };
-	return list;
+	scopes.delete(limits.scopeKey); // listar fuerza datos frescos
+	return (await scopeFor(client, limits)).list;
 }
 
-/** La lectura se limita a la MCC y sus cuentas hijas. */
+/** Solo se lee o escribe en cuentas del ámbito: la jerarquía de la MCC (propietario) o las del propio usuario. */
 export async function assertReadable(client: GoogleAdsClient, limits: Limits, customerId: string): Promise<string> {
 	const cid = normalizeCustomerId(customerId);
-	if (cid === limits.loginCustomerId) return cid;
-	if (!childCache || childCache.expiresAt < Date.now()) await listAccessibleCustomers(client, limits);
-	if (!childCache!.ids.has(cid)) throw new Error(`La cuenta ${cid} no cuelga de la MCC ${limits.loginCustomerId}. Lectura denegada.`);
+	if (limits.mode === "mcc" && cid === limits.loginCustomerId) return cid;
+	const sc = await scopeFor(client, limits);
+	if (!sc.ids.has(cid)) {
+		throw new Error(
+			limits.mode === "mcc"
+				? `La cuenta ${cid} no cuelga de la MCC ${limits.loginCustomerId}. Lectura denegada.`
+				: `Tu usuario de Google no tiene acceso a la cuenta ${cid}. Usa list_accessible_customers para ver las tuyas.`,
+		);
+	}
 	return cid;
 }
 

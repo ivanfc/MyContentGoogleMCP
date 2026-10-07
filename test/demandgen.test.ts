@@ -190,7 +190,7 @@ describe("plan Demand Gen", () => {
 		const txt = JSON.stringify(main.mutateOperations);
 		expect(txt).toContain(`customers/${CID}/customAudiences/900`);
 		expect(txt).not.toMatch(/customAudiences\/-\d/);
-		const [log] = await getAuditLog(deps.kv, 1);
+		const [log] = await getAuditLog(deps.kv, 1, deps.userEmail);
 		expect(log.resource_names).toEqual([`customers/${CID}/customAudiences/900`, `customers/${CID}/campaigns/1`]);
 	});
 

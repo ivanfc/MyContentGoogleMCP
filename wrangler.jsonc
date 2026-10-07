@@ -11,12 +11,15 @@
 	"migrations": [
 		{ "new_sqlite_classes": ["GoogleAdsMCP"], "tag": "v1" },
 		// Cerrojo global para que un plan no se aplique dos veces en paralelo.
-		{ "new_sqlite_classes": ["PlanLock"], "tag": "v2" }
+		{ "new_sqlite_classes": ["PlanLock"], "tag": "v2" },
+		// Cuota diaria de la API compartida entre usuarios (reserva para el propietario).
+		{ "new_sqlite_classes": ["UsageQuota"], "tag": "v3" }
 	],
 	"durable_objects": {
 		"bindings": [
 			{ "class_name": "GoogleAdsMCP", "name": "MCP_OBJECT" },
-			{ "class_name": "PlanLock", "name": "PLAN_LOCK" }
+			{ "class_name": "PlanLock", "name": "PLAN_LOCK" },
+			{ "class_name": "UsageQuota", "name": "USAGE_QUOTA" }
 		]
 	},
 	"kv_namespaces": [
@@ -28,7 +31,15 @@
 	"vars": {
 		"GOOGLE_ADS_LOGIN_CUSTOMER_ID": "2567236642",
 		"ALLOWED_CUSTOMER_IDS": "*",
-		"ALLOWED_EMAILS": "ivan@mycontent.agency",
+		// Autorizado por Iván el 07/10/2026: cualquier cuenta de Google puede conectarse; cada usuario opera solo con SUS
+		// cuentas de Google Ads (su propio permiso de Google). El propietario usa las credenciales del Worker y la MCC de arriba.
+		"ALLOWED_EMAILS": "*",
+		"OWNER_EMAILS": "ivan@mycontent.agency",
+		// Cuota diaria de operaciones de la API (Basic = 15.000/día por proyecto, compartida por todos): total del MCP,
+		// tope conjunto de los no propietarios (el resto queda reservado al propietario) y tope por usuario.
+		"QUOTA_DAILY_TOTAL": "14000",
+		"QUOTA_DAILY_OTHERS": "5000",
+		"QUOTA_DAILY_PER_USER": "1000",
 		"MAX_DAILY_BUDGET": "60",
 		"MAX_BUDGET_INCREASE_PCT": "100",
 		// URL pública del Worker (audiencia OAuth). Vacía = origen de la petición.

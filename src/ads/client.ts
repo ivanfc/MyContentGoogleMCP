@@ -98,24 +98,41 @@ interface TokenCache {
 	token: string;
 	expiresAt: number;
 }
-let tokenCache: TokenCache | undefined;
+/** Un access token por refresh token: con varios usuarios no se pueden mezclar. */
+const tokenCache = new Map<string, TokenCache>();
 
 /** Solo para tests. */
 export function _resetTokenCache() {
-	tokenCache = undefined;
+	tokenCache.clear();
 }
+
+/** Credenciales y contexto de un cliente: las del Worker (propietario) o las de un usuario. */
+export type ClientCreds = Pick<AdsEnv, "GOOGLE_ADS_DEVELOPER_TOKEN" | "GOOGLE_ADS_CLIENT_ID" | "GOOGLE_ADS_CLIENT_SECRET" | "GOOGLE_ADS_REFRESH_TOKEN"> & {
+	/** MCC por defecto para la cabecera login-customer-id. Vacío en modo usuario. */
+	GOOGLE_ADS_LOGIN_CUSTOMER_ID?: string;
+};
 
 export class GoogleAdsClient {
 	private fetchImpl: FetchLike;
+	/** login-customer-id por cuenta (modo usuario: la MCC a través de la que el usuario accede a cada cuenta). */
+	private logins = new Map<string, string>();
+	/** Se llama antes de cada petición con el nº de operaciones que consume (cuota diaria). Puede lanzar. */
+	beforeRequest?: (ops: number) => Promise<void>;
+
 	constructor(
-		private env: Pick<AdsEnv, "GOOGLE_ADS_DEVELOPER_TOKEN" | "GOOGLE_ADS_CLIENT_ID" | "GOOGLE_ADS_CLIENT_SECRET" | "GOOGLE_ADS_REFRESH_TOKEN" | "GOOGLE_ADS_LOGIN_CUSTOMER_ID">,
+		private env: ClientCreds,
 		fetchImpl?: FetchLike,
 	) {
 		this.fetchImpl = fetchImpl ?? ((input, init) => fetch(input, init));
 	}
 
+	setLogins(map: Map<string, string>) {
+		for (const [k, v] of map) this.logins.set(k, v);
+	}
+
 	async getAccessToken(): Promise<string> {
-		if (tokenCache && tokenCache.expiresAt > Date.now() + 60_000) return tokenCache.token;
+		const cached = tokenCache.get(this.env.GOOGLE_ADS_REFRESH_TOKEN);
+		if (cached && cached.expiresAt > Date.now() + 60_000) return cached.token;
 		const res = await this.fetchImpl("https://oauth2.googleapis.com/token", {
 			method: "POST",
 			headers: { "Content-Type": "application/x-www-form-urlencoded" },
@@ -129,19 +146,25 @@ export class GoogleAdsClient {
 		if (!res.ok) {
 			const body = await res.text();
 			// No se loguea ningún secreto: solo el cuerpo de error de Google (error / error_description).
+			if (/invalid_grant/.test(body)) {
+				throw new Error("El acceso de Google Ads de tu usuario ha caducado o se ha revocado. Desconecta y vuelve a conectar el conector para autorizarlo de nuevo.");
+			}
 			throw new Error(`No se pudo obtener el access token de Google Ads (HTTP ${res.status}): ${body.slice(0, 500)}`);
 		}
 		const json = (await res.json()) as { access_token: string; expires_in: number };
-		tokenCache = { token: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000 };
+		tokenCache.set(this.env.GOOGLE_ADS_REFRESH_TOKEN, { token: json.access_token, expiresAt: Date.now() + (json.expires_in ?? 3600) * 1000 });
 		return json.access_token;
 	}
 
-	private async headers(): Promise<Record<string, string>> {
+	private async headers(path: string): Promise<Record<string, string>> {
 		const h: Record<string, string> = {
 			Authorization: `Bearer ${await this.getAccessToken()}`,
-			"login-customer-id": normalizeCustomerId(this.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID),
 			"Content-Type": "application/json",
 		};
+		// login-customer-id: la MCC por la que se accede a la cuenta de la ruta (o la MCC fija del propietario).
+		const cid = path.match(/^customers\/(\d+)/)?.[1];
+		const login = (cid && this.logins.get(cid)) || this.env.GOOGLE_ADS_LOGIN_CUSTOMER_ID;
+		if (login && cid) h["login-customer-id"] = normalizeCustomerId(login);
 		// Google retiró los developer tokens el 09-09-2026: el nivel de acceso lo determina el proyecto de
 		// Google Cloud que emitió el cliente OAuth. La cabecera es opcional (se ignora); solo se envía si existe.
 		if (this.env.GOOGLE_ADS_DEVELOPER_TOKEN) h["developer-token"] = this.env.GOOGLE_ADS_DEVELOPER_TOKEN;
@@ -149,9 +172,14 @@ export class GoogleAdsClient {
 	}
 
 	async request(method: "GET" | "POST" | "DELETE", path: string, body?: Json): Promise<Json> {
+		if (this.beforeRequest) {
+			// Operaciones de cuota de Google: cada operación de un mutate cuenta; el resto de peticiones, 1.
+			const ops = Array.isArray(body?.mutateOperations) ? body.mutateOperations.length : Array.isArray(body?.operations) ? body.operations.length : 1;
+			await this.beforeRequest(Math.max(1, ops));
+		}
 		const res = await this.fetchImpl(`${GOOGLE_ADS_BASE_URL}/${path}`, {
 			method,
-			headers: await this.headers(),
+			headers: await this.headers(path),
 			body: body ? JSON.stringify(body) : undefined,
 		});
 		if (!res.ok) throw await parseAdsError(res);

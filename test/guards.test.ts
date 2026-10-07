@@ -189,7 +189,7 @@ describe("assertReadable con comodín", () => {
 	it("rechaza cuentas que no cuelgan de la MCC", async () => {
 		const { assertReadable, _resetChildCache } = await import("../src/tools/read");
 		_resetChildCache();
-		const client = { searchAll: async () => [{ customerClient: { id: "8460514008", descriptiveName: "N", manager: false, status: "ENABLED", level: 1 } }] } as any;
+		const client = { setLogins: () => {}, searchAll: async () => [{ customerClient: { id: "8460514008", descriptiveName: "N", manager: false, status: "ENABLED", level: 1 } }] } as any;
 		const wild = getLimits({ ...ENV, ALLOWED_CUSTOMER_IDS: "*" });
 		await expect(assertReadable(client, wild, "8460514008")).resolves.toBe("8460514008");
 		await expect(assertReadable(client, wild, "9999999999")).rejects.toThrow(/no cuelga de la MCC/);
