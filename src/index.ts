@@ -552,13 +552,14 @@ export default {
 			clientRegistrationEndpoint: "/register",
 			defaultHandler: GoogleHandler as any,
 			tokenEndpoint: "/token",
-			// Sesiones de los clientes MCP (Claude, Cowork, Codex). Visto en logs (04-07/10/2026): Codex renovaba cada hora
-			// y, con varias instancias compartiendo credenciales, la rotación de refresh tokens las dejaba sin sesión
-			// (POST /token → 400 invalid_grant). Con 8 h se renueva 8 veces menos; con caducidad por inactividad, una
-			// sesión que se usa no caduca (antes: 30 días fijos desde el login, aunque se usara a diario).
-			accessTokenTTL: 8 * 3600,
-			refreshTokenTTL: 90 * 24 * 3600,
-			refreshTokenIdleTTL: 30 * 24 * 3600,
+			// Sesiones de los clientes MCP (Claude, Cowork, Codex) sin caducidad, a petición de Iván (07/10/2026):
+			// - refresh token y cliente registrado sin caducidad (undefined explícito = nunca caducan);
+			// - access token de 30 días: los clientes casi no renuevan, lo que también evita el problema de Codex con la
+			//   rotación de refresh tokens entre varias instancias (POST /token → 400 invalid_grant).
+			// Para cortar el acceso de alguien: quitarlo de ALLOWED_EMAILS (se comprueba en cada llamada).
+			accessTokenTTL: 30 * 24 * 3600,
+			refreshTokenTTL: undefined,
+			clientRegistrationTTL: undefined,
 			resourceMetadata: {
 				resource: (env.PUBLIC_BASE_URL || new URL(request.url).origin).replace(/\/$/, "").toLowerCase(),
 				resource_name: "MyContent Google Ads MCP",
