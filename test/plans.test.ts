@@ -116,7 +116,7 @@ describe("plan → apply", () => {
 		expect(ads.mutateCalls).toHaveLength(2);
 		expect(ads.mutateCalls[1].body.validateOnly).toBe(false);
 		expect(ads.mutateCalls[1].body.mutateOperations).toEqual(ads.mutateCalls[0].body.mutateOperations);
-		const log = await getAuditLog(kv as unknown as KVNamespace, 10);
+		const log = await getAuditLog(kv as unknown as KVNamespace, 10, "ivan@mycontent.agency");
 		expect(log).toHaveLength(1);
 		expect(log[0]).toMatchObject({ outcome: "APPLIED", user_email: "ivan@mycontent.agency", customer_id: CID, resource_names: [BUDGET] });
 		expect(log[0].operations).toEqual(ads.mutateCalls[1].body.mutateOperations);
@@ -135,7 +135,7 @@ describe("plan → apply", () => {
 		expect(a.ok).toBe(false);
 		expect(a.message).toMatch(/ha cambiado/);
 		expect(ads.mutateCalls).toHaveLength(1); // solo el validateOnly
-		expect((await getAuditLog(kv as unknown as KVNamespace, 10))[0].outcome).toBe("ABORTED_STATE_CHANGED");
+		expect((await getAuditLog(kv as unknown as KVNamespace, 10, "ivan@mycontent.agency"))[0].outcome).toBe("ABORTED_STATE_CHANGED");
 	});
 
 	it("los planes caducan a las 24 h y list_pending_plans los recupera mientras tanto", async () => {
@@ -164,7 +164,7 @@ describe("plan → apply", () => {
 		ads.mutateError = adsError({ internalError: "TRANSIENT_ERROR" }, "try again");
 		const a = await applyPlan(deps, r.plan_id, `APPLY ${r.plan_id}`);
 		expect(a.ok).toBe(false);
-		const log = await getAuditLog(kv as unknown as KVNamespace, 10);
+		const log = await getAuditLog(kv as unknown as KVNamespace, 10, "ivan@mycontent.agency");
 		expect(log[0].outcome).toBe("FAILED");
 		expect(JSON.stringify(log[0].error)).toContain("REQ-123");
 	});

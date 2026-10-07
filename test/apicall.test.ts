@@ -109,7 +109,7 @@ describe("plan → apply de una llamada a la API", () => {
 		const a = await applyPlan(deps, r.plan_id, `APPLY-ELEVATED ${r.plan_id}`);
 		expect(a.ok).toBe(true);
 		expect(calls.at(-1)!.body).toEqual(apiCall.body);
-		const [log] = await getAuditLog(deps.kv, 1);
+		const [log] = await getAuditLog(deps.kv, 1, deps.userEmail);
 		expect(log.outcome).toBe("APPLIED");
 		expect(log.resource_names).toContain(`customers/${CID}/userLists/77`);
 	});

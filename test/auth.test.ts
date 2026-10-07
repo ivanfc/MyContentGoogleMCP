@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { GoogleHandler } from "../src/auth/google-handler";
+import { ADWORDS_SCOPE, GoogleHandler, isEmailAllowed, isOwner } from "../src/auth/google-handler";
 import { bindStateToSession, createOAuthState } from "../src/auth/workers-oauth-utils";
 import { MemoryKV } from "./helpers";
 
 /** Simula Google (token + userinfo) y recorre /callback del handler real. */
-async function callback(email: string, verified = true) {
+async function callback(email: string, verified = true, opts: { allowed?: string; token?: Record<string, string> } = {}) {
 	const kv = new MemoryKV();
 	const completeAuthorization = vi.fn(async () => ({ redirectTo: "https://claude.ai/api/mcp/auth_callback?code=abc" }));
 	const env = {
@@ -12,7 +12,8 @@ async function callback(email: string, verified = true) {
 		OAUTH_PROVIDER: { completeAuthorization },
 		GOOGLE_OAUTH_CLIENT_ID: "client",
 		GOOGLE_OAUTH_CLIENT_SECRET: "secret",
-		ALLOWED_EMAILS: "ivan@mycontent.agency",
+		ALLOWED_EMAILS: opts.allowed ?? "ivan@mycontent.agency",
+		OWNER_EMAILS: "ivan@mycontent.agency",
 		COOKIE_ENCRYPTION_KEY: "k",
 	};
 	const oauthReqInfo = { clientId: "c1", redirectUri: "https://claude.ai/api/mcp/auth_callback", scope: [], state: "s", responseType: "code" };
@@ -21,7 +22,7 @@ async function callback(email: string, verified = true) {
 	vi.stubGlobal(
 		"fetch",
 		vi.fn(async (url: string) => {
-			if (url.startsWith("https://oauth2.googleapis.com/token")) return Response.json({ access_token: "g-token" });
+			if (url.startsWith("https://oauth2.googleapis.com/token")) return Response.json({ access_token: "g-token", ...opts.token });
 			if (url.startsWith("https://openidconnect.googleapis.com/v1/userinfo")) return Response.json({ sub: "123", email, email_verified: verified, name: "X" });
 			return new Response("unexpected", { status: 500 });
 		}),
@@ -54,5 +55,32 @@ describe("login con Google + ALLOWED_EMAILS", () => {
 	it("email no verificado: 403", async () => {
 		const { res } = await callback("ivan@mycontent.agency", false);
 		expect(res.status).toBe(403);
+	});
+
+	it("ALLOWED_EMAILS=*: un invitado que concede Google Ads entra con su propio refresh token", async () => {
+		const { res, completeAuthorization } = await callback("amigo@gmail.com", true, {
+			allowed: "*",
+			token: { refresh_token: "rt-amigo", scope: `openid email ${ADWORDS_SCOPE}` },
+		});
+		expect(res.status).toBe(302);
+		expect((completeAuthorization.mock.calls[0] as any)[0].props).toEqual({ email: "amigo@gmail.com", name: "X", googleRefreshToken: "rt-amigo" });
+	});
+
+	it("invitado que no concede el permiso de Google Ads: 403 y no se emite token", async () => {
+		const { res, completeAuthorization } = await callback("amigo@gmail.com", true, { allowed: "*", token: { refresh_token: "rt", scope: "openid email" } });
+		expect(res.status).toBe(403);
+		expect(await res.text()).toMatch(/Google Ads/);
+		expect(completeAuthorization).not.toHaveBeenCalled();
+	});
+});
+
+describe("isEmailAllowed / isOwner", () => {
+	it("el comodín abre el login pero nunca da rol de propietario", () => {
+		expect(isEmailAllowed("x@y.com", "*")).toBe(true);
+		expect(isEmailAllowed("x@y.com", "a@b.com")).toBe(false);
+		expect(isEmailAllowed(undefined, "*")).toBe(false);
+		expect(isOwner("Ivan@MyContent.agency", "ivan@mycontent.agency")).toBe(true);
+		expect(isOwner("x@y.com", "*")).toBe(false);
+		expect(isOwner(undefined, "ivan@mycontent.agency")).toBe(false);
 	});
 });

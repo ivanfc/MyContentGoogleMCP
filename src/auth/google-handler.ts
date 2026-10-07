@@ -17,14 +17,27 @@ import {
 export type Props = {
 	name: string;
 	email: string;
+	/**
+	 * Refresh token de Google con permiso de Google Ads del propio usuario. Va dentro de las props, que el
+	 * proveedor OAuth guarda cifradas con una clave derivada del token del usuario: solo se descifra con su sesión.
+	 */
+	googleRefreshToken?: string;
 };
+
+/** Propietario: usa las credenciales del Worker (su MCC) y tiene la cuota reservada. Sin comodines. */
+export function isOwner(email: string | undefined, ownerEmails: string | undefined): boolean {
+	return Boolean(email) && parseList(ownerEmails).map((e) => e.toLowerCase()).includes(email!.toLowerCase());
+}
+
+export const ADWORDS_SCOPE = "https://www.googleapis.com/auth/adwords";
 
 const app = new Hono<{ Bindings: Env & { OAUTH_PROVIDER: OAuthHelpers } }>();
 
 export function isEmailAllowed(email: string | undefined, allowedEmails: string | undefined): boolean {
 	if (!email) return false;
 	const allowed = parseList(allowedEmails).map((e) => e.toLowerCase());
-	return allowed.includes(email.toLowerCase());
+	// "*" = cualquier cuenta de Google (cada usuario solo ve sus propias cuentas de Google Ads).
+	return allowed.includes("*") || allowed.includes(email.toLowerCase());
 }
 
 app.get("/", (c) => c.text("mycontent-google-ads-mcp: endpoint MCP en /mcp (Streamable HTTP) y /sse (legacy)."));
@@ -85,9 +98,11 @@ function redirectToGoogle(request: Request, env: Env, stateToken: string, header
 	const upstream = new URL("https://accounts.google.com/o/oauth2/v2/auth");
 	upstream.searchParams.set("client_id", env.GOOGLE_OAUTH_CLIENT_ID);
 	upstream.searchParams.set("redirect_uri", new URL("/callback", request.url).href);
-	upstream.searchParams.set("scope", "openid email profile");
+	upstream.searchParams.set("scope", `openid email profile ${ADWORDS_SCOPE}`);
 	upstream.searchParams.set("response_type", "code");
-	upstream.searchParams.set("prompt", "select_account");
+	// offline + consent: Google devuelve siempre un refresh token para operar con la cuenta del usuario.
+	upstream.searchParams.set("access_type", "offline");
+	upstream.searchParams.set("prompt", "consent select_account");
 	upstream.searchParams.set("state", stateToken);
 	return new Response(null, { status: 302, headers: { ...headers, location: upstream.href } });
 }
@@ -120,7 +135,7 @@ app.get("/callback", async (c) => {
 		}).toString(),
 	});
 	if (!tokenRes.ok) return c.text("No se pudo completar el login con Google.", 502);
-	const { access_token } = (await tokenRes.json()) as { access_token?: string };
+	const { access_token, refresh_token, scope } = (await tokenRes.json()) as { access_token?: string; refresh_token?: string; scope?: string };
 	if (!access_token) return c.text("Google no devolvió access token.", 502);
 
 	const userRes = await fetch("https://openidconnect.googleapis.com/v1/userinfo", { headers: { Authorization: `Bearer ${access_token}` } });
@@ -131,10 +146,17 @@ app.get("/callback", async (c) => {
 		console.warn("Login denegado (email fuera de ALLOWED_EMAILS)", user.email);
 		return c.text(`403 Forbidden: ${user.email ?? "este usuario"} no tiene acceso a este conector.`, 403);
 	}
+	const owner = isOwner(user.email, c.env.OWNER_EMAILS);
+	if (!owner && (!refresh_token || !String(scope ?? "").split(" ").includes(ADWORDS_SCOPE))) {
+		return c.text(
+			"Para usar el conector tienes que permitir el acceso a Google Ads en la pantalla de Google. Vuelve a conectar y marca la casilla de Google Ads.",
+			403,
+		);
+	}
 
 	const { redirectTo } = await c.env.OAUTH_PROVIDER.completeAuthorization({
 		metadata: { label: user.name ?? user.email },
-		props: { email: user.email!, name: user.name ?? user.email! } satisfies Props,
+		props: { email: user.email!, name: user.name ?? user.email!, ...(refresh_token ? { googleRefreshToken: refresh_token } : {}) } satisfies Props,
 		request: oauthReqInfo,
 		scope: oauthReqInfo.scope,
 		userId: user.sub,

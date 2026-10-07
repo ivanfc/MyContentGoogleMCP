@@ -258,6 +258,8 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 		elevated,
 	};
 	await deps.kv.put(`plan:${id}`, JSON.stringify(plan), { expirationTtl: PLAN_TTL_SECONDS });
+	// Índice por usuario: list_pending_plans no recorre los planes de los demás.
+	await deps.kv.put(`planu:${await userKey(deps.userEmail)}:${id}`, "", { expirationTtl: PLAN_TTL_SECONDS });
 	return {
 		ok: true,
 		plan_id: id,
@@ -273,10 +275,17 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 	};
 }
 
+/** Clave opaca por usuario para prefijos de KV (no expone el email en los nombres de clave). */
+export async function userKey(email: string): Promise<string> {
+	return (await sha256(email.trim().toLowerCase())).slice(0, 16);
+}
+
+/** Un plan solo existe para quien lo creó: otro usuario recibe "no existe", igual que con un id inventado. */
 export async function loadPlan(deps: Deps, planId: string): Promise<Plan | undefined> {
 	const raw = await deps.kv.get(`plan:${planId}`);
 	if (!raw) return undefined;
 	const plan = JSON.parse(raw) as Plan;
+	if (plan.createdBy.toLowerCase() !== deps.userEmail.toLowerCase()) return undefined;
 	if (plan.expiresAt <= now(deps)) {
 		await deps.kv.delete(`plan:${planId}`);
 		return undefined;
@@ -286,10 +295,11 @@ export async function loadPlan(deps: Deps, planId: string): Promise<Plan | undef
 
 /** Planes pendientes (no aplicados ni caducados), más recientes primero. Sirve para recuperar un plan_id perdido. */
 export async function listPendingPlans(deps: Deps, customerId?: string) {
-	const list = await deps.kv.list({ prefix: "plan:", limit: 100 });
+	const prefix = `planu:${await userKey(deps.userEmail)}:`;
+	const list = await deps.kv.list({ prefix, limit: 100 });
 	const out = [];
 	for (const k of list.keys) {
-		const plan = await loadPlan(deps, k.name.slice("plan:".length));
+		const plan = await loadPlan(deps, k.name.slice(prefix.length));
 		if (!plan || (customerId && plan.customerId !== customerId)) continue;
 		out.push({
 			plan_id: plan.id,
@@ -333,14 +343,25 @@ const AUDIT_MAX_KEY = 9_999_999_999_999;
 
 async function writeAudit(deps: Deps, rec: AuditRecord) {
 	const inverted = String(AUDIT_MAX_KEY - now(deps)).padStart(13, "0");
-	await deps.kv.put(`audit:${inverted}:${rec.plan_id}`, JSON.stringify(rec));
+	await deps.kv.put(`auditu:${await userKey(rec.user_email)}:${inverted}:${rec.plan_id}`, JSON.stringify(rec));
 }
 
-export async function getAuditLog(kv: KVNamespace, limit: number): Promise<AuditRecord[]> {
-	const list = await kv.list({ prefix: "audit:", limit: Math.min(Math.max(limit, 1), 100) });
+/**
+ * Auditoría del propio usuario, más reciente primero. El propietario ve además el registro anterior a
+ * multiusuario (prefijo "audit:"), que solo contiene cambios suyos.
+ */
+export async function getAuditLog(kv: KVNamespace, limit: number, userEmail: string, owner = false): Promise<AuditRecord[]> {
+	const n = Math.min(Math.max(limit, 1), 100);
+	const prefixes = [`auditu:${await userKey(userEmail)}:`, ...(owner ? ["audit:"] : [])];
+	const entries: { order: string; name: string }[] = [];
+	for (const prefix of prefixes) {
+		const list = await kv.list({ prefix, limit: n });
+		for (const k of list.keys) entries.push({ order: k.name.slice(prefix.length), name: k.name });
+	}
+	entries.sort((a, b) => a.order.localeCompare(b.order));
 	const out: AuditRecord[] = [];
-	for (const k of list.keys) {
-		const raw = await kv.get(k.name);
+	for (const e of entries.slice(0, n)) {
+		const raw = await kv.get(e.name);
 		if (raw) out.push(JSON.parse(raw));
 	}
 	return out;

@@ -5,8 +5,9 @@ import { z } from "zod";
 import { GoogleAdsClient, GoogleAdsApiError, type Json } from "./ads/client";
 import { describeGaqlFields, gaqlHint } from "./ads/fields";
 import { OMITTED_NOTE, omittedFields } from "./ads/gaql";
-import { type Props, GoogleHandler, isEmailAllowed } from "./auth/google-handler";
-import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId } from "./config";
+import { type Props, GoogleHandler, isEmailAllowed, isOwner } from "./auth/google-handler";
+import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, type Limits, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId, userLimits } from "./config";
+import type { UsageQuota } from "./quota";
 import { describeOperation, listOperations, loadDiscovery } from "./ads/schema";
 import { type ApiCall, buildPath, describeMethod, findMethod, listMethods, mutateRedirect } from "./plans/apicall";
 import { getCampaignAssets } from "./plans/assets";
@@ -51,6 +52,7 @@ const PLAN_NOTE =
 	"Si el plan devuelve elevated (operaciones sensibles o destructivas), la confirmación es \"APPLY-ELEVATED <plan_id>\" y debes enseñar esos motivos al usuario antes de pedirle aprobación. NO aplica nada: lee el estado actual, construye las operaciones, las valida con validateOnly y devuelve plan_id + resumen ANTES → DESPUÉS. Para ejecutar, enseña el resumen al usuario y, solo con su aprobación explícita, llama a apply_plan(plan_id, confirm: \"APPLY <plan_id>\"). El plan caduca en 24 h; si se pierde el plan_id, list_pending_plans lo recupera.";
 
 export { PlanLock } from "./lock";
+export { UsageQuota } from "./quota";
 
 /**
  * Contrato de respuesta para cualquier cliente (Claude, Cowork, Codex…): qué es "hecho", qué no, y cómo decirlo.
@@ -69,13 +71,44 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
 
 	private services() {
-		const missing = missingSecrets(this.env as unknown as Record<string, unknown>);
-		if (missing.length) throw new Error(`Faltan secretos del Worker: ${missing.join(", ")}. Configúralos con "wrangler secret put".`);
-		if (!isEmailAllowed(this.props?.email, this.env.ALLOWED_EMAILS)) {
-			throw new Error(`403: ${this.props?.email ?? "usuario desconocido"} ya no está en ALLOWED_EMAILS.`);
+		const email = this.props?.email;
+		if (!email || !isEmailAllowed(email, this.env.ALLOWED_EMAILS)) {
+			throw new Error(`403: ${email ?? "usuario desconocido"} no tiene acceso a este conector.`);
 		}
-		const limits = getLimits(this.env);
-		const client = new GoogleAdsClient(this.env);
+		const owner = isOwner(email, this.env.OWNER_EMAILS);
+		let client: GoogleAdsClient;
+		let limits: Limits;
+		if (owner) {
+			// Propietario: credenciales del Worker y su MCC (comportamiento de siempre).
+			const missing = missingSecrets(this.env as unknown as Record<string, unknown>);
+			if (missing.length) throw new Error(`Faltan secretos del Worker: ${missing.join(", ")}. Configúralos con "wrangler secret put".`);
+			client = new GoogleAdsClient(this.env);
+			limits = getLimits(this.env);
+		} else {
+			// Cualquier otro usuario: SU permiso de Google Ads. Solo ve las cuentas a las que su usuario de Google tiene acceso.
+			const refresh = this.props?.googleRefreshToken;
+			if (!refresh) {
+				throw new Error("Tu conexión no tiene permiso de Google Ads. Desconecta el conector, vuelve a conectarlo y acepta el acceso a Google Ads en la pantalla de Google.");
+			}
+			client = new GoogleAdsClient({
+				GOOGLE_ADS_CLIENT_ID: this.env.GOOGLE_OAUTH_CLIENT_ID,
+				GOOGLE_ADS_CLIENT_SECRET: this.env.GOOGLE_OAUTH_CLIENT_SECRET,
+				GOOGLE_ADS_REFRESH_TOKEN: refresh,
+				GOOGLE_ADS_DEVELOPER_TOKEN: this.env.GOOGLE_ADS_DEVELOPER_TOKEN,
+			});
+			limits = userLimits(this.env, email);
+		}
+		// Cuota diaria compartida de la API: el propietario tiene reservado lo que los demás no pueden gastar.
+		const quota = this.env.USAGE_QUOTA.get(this.env.USAGE_QUOTA.idFromName("global")) as unknown as DurableObjectStub<UsageQuota>;
+		const cfg = {
+			total: Number(this.env.QUOTA_DAILY_TOTAL || 14000),
+			others: Number(this.env.QUOTA_DAILY_OTHERS || 5000),
+			perUser: Number(this.env.QUOTA_DAILY_PER_USER || 1000),
+		};
+		client.beforeRequest = async (n) => {
+			const r = await quota.consume(email.toLowerCase(), owner, n, cfg);
+			if (!r.ok) throw new Error(r.reason);
+		};
 		const deps: Deps = {
 			client,
 			kv: this.env.STATE_KV,
@@ -86,7 +119,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				await this.writable(cid);
 			},
 		};
-		return { limits, client, deps };
+		return { limits, client, deps, owner, quota };
 	}
 
 	private async writable(cid: string) {
@@ -95,7 +128,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		if (!isWriteAllowed(limits, id)) {
 			throw new Error(`La cuenta ${id} no está en ALLOWED_CUSTOMER_IDS (${[...limits.allowedCustomerIds].join(", ")}). Escritura denegada.`);
 		}
-		// Siempre (también con "*"): la cuenta tiene que colgar de la MCC; si no, se rechaza.
+		// Siempre: la cuenta tiene que estar en el ámbito (jerarquía de la MCC del propietario o cuentas del usuario).
 		await assertReadable(client, limits, id);
 		return id;
 	}
@@ -143,7 +176,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 
 		this.tool(
 			"list_accessible_customers",
-			`Lista las cuentas bajo la MCC (login-customer-id) con nombre, moneda, zona horaria y si se permite escribir en ellas (ALLOWED_CUSTOMER_IDS). Úsala primero para descubrir customer_id. Google Ads API ${GOOGLE_ADS_API_VERSION}.`,
+			`Lista las cuentas de Google Ads a las que tienes acceso (directas y las que cuelgan de tus MCC) con nombre, moneda, zona horaria, a través de qué MCC se accede y si se permite escribir. Úsala primero para descubrir customer_id. Solo se puede leer y modificar estas cuentas. Google Ads API ${GOOGLE_ADS_API_VERSION}.`,
 			{},
 			async () => {
 				const { client, limits } = this.services();
@@ -253,8 +286,26 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			"Registro de auditoría de apply_plan (más reciente primero): fecha UTC, email, cuenta, operaciones exactas, respuesta de la API, resource names y resultado.",
 			{ limit: z.number().int().min(1).max(100).default(20) },
 			async ({ limit }) => {
-				this.services();
-				return getAuditLog(this.env.STATE_KV, limit);
+				const { deps, owner } = this.services();
+				return getAuditLog(this.env.STATE_KV, limit, deps.userEmail, owner);
+			},
+		);
+
+		this.tool(
+			"get_quota_usage",
+			"Operaciones de la Google Ads API consumidas hoy (día UTC) por tu usuario y tus límites diarios. Cada consulta GAQL (por página) y cada operación de un mutate o validación cuenta 1.",
+			{},
+			async () => {
+				const { deps, owner, quota } = this.services();
+				const st = await quota.usage();
+				const today = new Date().toISOString().slice(0, 10);
+				const used = st?.day === today ? (st.users[deps.userEmail.toLowerCase()] ?? 0) : 0;
+				return {
+					day_utc: today,
+					used_by_you: used,
+					your_daily_limit: owner ? Number(this.env.QUOTA_DAILY_TOTAL || 14000) : Number(this.env.QUOTA_DAILY_PER_USER || 1000),
+					...(owner && st?.day === today ? { total_used: st.total, guests_used: st.others, guests_limit: Number(this.env.QUOTA_DAILY_OTHERS || 5000), users_today: Object.keys(st.users).length } : {}),
+				};
 			},
 		);
 
