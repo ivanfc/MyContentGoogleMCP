@@ -4,7 +4,7 @@ import { McpAgent } from "agents/mcp";
 import { z } from "zod";
 import { GoogleAdsClient, GoogleAdsApiError, type Json } from "./ads/client";
 import { describeGaqlFields, gaqlHint } from "./ads/fields";
-import { OMITTED_NOTE, omittedFields } from "./ads/gaql";
+import { OMITTED_NOTE, addMissingSelectFields, omittedFields } from "./ads/gaql";
 import { type Props, GoogleHandler, isEmailAllowed, isOwner } from "./auth/google-handler";
 import { DEFAULT_MAX_ROWS, GOOGLE_ADS_API_VERSION, HARD_MAX_ROWS, type Limits, getLimits, isWriteAllowed, missingSecrets, normalizeCustomerId, userLimits } from "./config";
 import type { UsageQuota } from "./quota";
@@ -200,8 +200,16 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				const { client, limits } = this.services();
 				const cid = await assertReadable(client, limits, customer_id);
 				let found: { rows: Json[]; truncated: boolean };
+				let fixed: { query: string; added: string[] } | undefined;
 				try {
-					found = await client.search(cid, query, max_rows ?? DEFAULT_MAX_ROWS);
+					try {
+						found = await client.search(cid, query, max_rows ?? DEFAULT_MAX_ROWS);
+					} catch (e) {
+						// Único error que se corrige solo: Google dice qué campo del WHERE/ORDER BY falta en el SELECT.
+						fixed = e instanceof GoogleAdsApiError ? addMissingSelectFields(query, e.details) : undefined;
+						if (!fixed) throw e;
+						found = await client.search(cid, fixed.query, max_rows ?? DEFAULT_MAX_ROWS);
+					}
 				} catch (e) {
 					// Pista con el esquema real (campos parecidos, compatibilidad con el FROM, valores de enum).
 					const hint = await gaqlHint(client, this.env.STATE_KV, query, e);
@@ -209,8 +217,9 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 					throw e;
 				}
 				const { rows, truncated } = found;
-				const omitted = omittedFields(query, rows);
+				const omitted = omittedFields(fixed?.query ?? query, rows);
 				return {
+					...(fixed ? { auto_fixed: `Se añadieron al SELECT ${fixed.added.join(", ")} (Google exige que los campos del WHERE/ORDER BY estén en el SELECT).`, executed_query: fixed.query } : {}),
 					row_count: rows.length,
 					truncated,
 					...(Object.keys(omitted).length ? { omitted_fields: omitted, omitted_note: OMITTED_NOTE } : {}),

@@ -35,3 +35,17 @@ export function omittedFields(query: string, rows: Json[]): Record<string, numbe
 	}
 	return out;
 }
+
+/**
+ * Error de GAQL que se corrige sin cambiar lo que se pide: Google exige que los campos usados en WHERE/ORDER BY
+ * estén también en el SELECT y dice exactamente cuáles. Devuelve la consulta con esos campos añadidos, o undefined.
+ */
+export function addMissingSelectFields(query: string, details: { errorCode?: string; message?: string }[]): { query: string; added: string[] } | undefined {
+	const fields = details
+		.filter((d) => d.errorCode === "queryError.EXPECTED_REFERENCED_FIELD_IN_SELECT_CLAUSE")
+		.flatMap((d) => [...String(d.message ?? "").matchAll(/'([a-z_][a-z0-9_.]*)'/gi)].map((m) => m[1]));
+	const have = new Set(selectedFields(query).map((f) => f.toLowerCase()));
+	const added = [...new Set(fields)].filter((f) => !have.has(f.toLowerCase()));
+	if (!added.length || !/^\s*SELECT\s/i.test(query)) return undefined;
+	return { query: query.replace(/^\s*SELECT\s+/i, (s) => `${s}${added.join(", ")}, `), added };
+}
