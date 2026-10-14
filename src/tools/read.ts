@@ -111,6 +111,11 @@ export async function assertReadable(client: GoogleAdsClient, limits: Limits, cu
 				: `Tu usuario de Google no tiene acceso a la cuenta ${cid}. Usa list_accessible_customers para ver las tuyas.`,
 		);
 	}
+	// Cuentas canceladas, suspendidas o cerradas: Google responde CUSTOMER_NOT_ENABLED; se explica sin gastar cuota.
+	const status = sc.list.find((a) => a.customer_id === cid)?.status;
+	if (status && status !== "ENABLED") {
+		throw new Error(`La cuenta ${cid} está en estado ${status} en Google Ads: no se puede leer ni modificar hasta que se reactive.`);
+	}
 	return cid;
 }
 

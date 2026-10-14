@@ -468,6 +468,21 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 	}
 	// Los cambios YA están aplicados: un fallo al auditar no puede convertirse en "no se aplicó".
 	const warnings: string[] = [];
+	// Relectura: confirma contra la cuenta que el estado cambió de verdad (no solo que la API respondió 200).
+	let readback: "verified" | "unchanged" | "not_checked" | "failed" = "not_checked";
+	if (plan.stateQueries.length) {
+		try {
+			readback = (await computeStateHash(deps.client, plan.customerId, plan.stateQueries)) !== plan.stateHash ? "verified" : "unchanged";
+			if (readback === "unchanged") {
+				warnings.push("La API aceptó el cambio, pero al releer la cuenta el estado es igual que antes. Puede tardar unos segundos en reflejarse o el campo no se puede leer por GAQL: compruébalo antes de darlo por hecho.");
+			}
+		} catch (e) {
+			readback = "failed";
+			warnings.push(`Cambio aplicado, pero no se pudo releer la cuenta para confirmarlo: ${(e as Error).message}`);
+		}
+	} else if (created.length) {
+		readback = "verified";
+	}
 	try {
 		await writeAudit(deps, { ...base, outcome: "APPLIED", api_response: responses, resource_names: created });
 	} catch (ae) {
@@ -478,6 +493,7 @@ export async function applyPlan(deps: Deps, planId: string, confirm: string) {
 		...(warnings.length ? { warnings } : {}),
 		plan_id: planId,
 		applied_operations: plan.operations.length + (plan.preSteps?.length ?? 0) + (plan.apiCall ? 1 : 0),
+		readback,
 		resource_names: created,
 		summary: plan.summary,
 		response: plan.apiCall ? responses.apiCall : undefined,

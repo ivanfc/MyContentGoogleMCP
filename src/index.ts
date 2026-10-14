@@ -145,6 +145,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		// biome-ignore lint: el SDK tipa el shape de forma genérica
 		(this.server as any).registerTool(name, { description, inputSchema: shape }, async (args: any) => {
 			const started = Date.now();
+			let autoFixed = false;
 			const log = (outcome: "ok" | "rejected" | "error", e?: unknown) =>
 				// Una línea JSON por llamada (Workers Logs). Sin argumentos ni resultados: solo herramienta, cuenta, duración y error.
 				console.log(
@@ -155,11 +156,13 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 						user: this.props?.email,
 						outcome,
 						ms: Date.now() - started,
+						...(autoFixed ? { auto_fixed: true } : {}),
 						...(e ? { error: errorSummary(e) } : {}),
 					}),
 				);
 			try {
 				const data = await handler(args);
+				autoFixed = Boolean((data as { auto_fixed?: unknown } | undefined)?.auto_fixed);
 				const result = ok(data);
 				if (result.isError) {
 					const d = data as { stage?: string; message?: string };

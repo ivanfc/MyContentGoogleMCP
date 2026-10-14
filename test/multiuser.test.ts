@@ -143,3 +143,34 @@ describe("planes y auditoría aislados por usuario", () => {
 		expect((await getAuditLog(k, 10, deps.userEmail, true)).map((r) => r.plan_id)).toEqual([planId, "legacy"]);
 	});
 });
+
+describe("auditoría 14/10: relectura tras aplicar y cuentas no activas", () => {
+	it("apply_plan relee la cuenta: verified si el estado cambió, unchanged con aviso si no", async () => {
+		const ctx = setup();
+		const BUDGET = `customers/${CID}/campaignBudgets/1`;
+		const amount = () => (ctx.ads.mutateCalls.some((c) => !c.body.validateOnly) ? "10000000" : "25000000");
+		ctx.ads.on(/FROM campaign WHERE campaign.id = 22714600993/, () => [
+			{ campaign: { id: "22714600993", name: "C", campaignBudget: BUDGET }, campaignBudget: { resourceName: BUDGET, name: "b", amountMicros: amount(), explicitlyShared: false, referenceCount: "1" } },
+		]);
+		ctx.ads.on(/FROM campaign_budget WHERE/, () => [{ campaignBudget: { resourceName: BUDGET, amountMicros: amount(), explicitlyShared: false, referenceCount: "1" } }]);
+		ctx.ads.mutateResponse = { mutateOperationResponses: [{ campaignBudgetResult: { resourceName: BUDGET } }] };
+		const r1 = await createPlan(ctx.deps, await buildCampaignBudgetPlan(ctx.client, CID, "22714600993", 10));
+		if (!r1.ok) throw new Error("plan");
+		const a1 = (await applyPlan(ctx.deps, r1.plan_id, `APPLY ${r1.plan_id}`)) as { ok: boolean; readback?: string };
+		expect(a1).toMatchObject({ ok: true, readback: "verified" });
+
+		const r2 = await createPlan(ctx.deps, await buildCampaignBudgetPlan(ctx.client, CID, "22714600993", 20));
+		if (!r2.ok) throw new Error("plan");
+		const a2 = (await applyPlan(ctx.deps, r2.plan_id, `APPLY ${r2.plan_id}`)) as { ok: boolean; readback?: string; warnings?: string[] };
+		expect(a2).toMatchObject({ ok: true, readback: "unchanged" });
+		expect(a2.warnings?.join()).toMatch(/igual que antes/);
+	});
+
+	it("una cuenta cancelada se rechaza con un mensaje claro, sin llamar a la API", async () => {
+		_resetChildCache();
+		const client = { setLogins: () => {}, searchAll: async () => [{ customerClient: { id: "1111111111", descriptiveName: "Vieja", manager: false, status: "CANCELED", level: 1 } }] } as any;
+		const { getLimits } = await import("../src/config");
+		const limits = getLimits({ ...ENV, ALLOWED_CUSTOMER_IDS: "*" } as any);
+		await expect(assertReadable(client, limits, "1111111111")).rejects.toThrow(/estado CANCELED/);
+	});
+});
