@@ -129,6 +129,13 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 			assertWritable: async (cid) => {
 				await this.writable(cid);
 			},
+			quotaRemaining: async () => {
+				const st = await quota.usage();
+				const used = st?.day === new Date().toISOString().slice(0, 10) ? st : undefined;
+				const total = cfg.total - (used?.total ?? 0);
+				if (owner) return total;
+				return Math.min(total, cfg.others - (used?.others ?? 0), cfg.perUser - (used?.users[email.toLowerCase()] ?? 0));
+			},
 		};
 		return { limits, client, deps, owner, quota };
 	}

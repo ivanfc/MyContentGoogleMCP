@@ -174,3 +174,27 @@ describe("auditoría 14/10: relectura tras aplicar y cuentas no activas", () => 
 		await expect(assertReadable(client, limits, "1111111111")).rejects.toThrow(/estado CANCELED/);
 	});
 });
+
+describe("19/10: coste de los planes antes de validar", () => {
+	const draft = (n: number) => ({
+		kind: "generic_mutate",
+		customerId: CID,
+		summary: ["x"],
+		operations: Array.from({ length: n }, (_, i) => ({ customerNegativeCriterionOperation: { create: { placement: { url: `s${i}.com` } } } })),
+		stateQueries: [],
+	});
+	it("rechaza planes de más de 1.000 operaciones sin validar", async () => {
+		const { deps, ads } = setup();
+		const r = await createPlan(deps, draft(1001));
+		expect(r).toMatchObject({ ok: false, stage: "size" });
+		expect(ads.mutateCalls).toHaveLength(0);
+	});
+	it("no valida si validar + aplicar no cabe en la cuota que queda", async () => {
+		const { deps, ads } = setup();
+		const r = await createPlan({ ...deps, quotaRemaining: async () => 100 }, draft(60));
+		expect(r).toMatchObject({ ok: false, stage: "quota" });
+		expect((r as { message: string }).message).toMatch(/quedan 100/);
+		expect(ads.mutateCalls).toHaveLength(0);
+		expect((await createPlan({ ...deps, quotaRemaining: async () => 500 }, draft(60))).ok).toBe(true);
+	});
+});
