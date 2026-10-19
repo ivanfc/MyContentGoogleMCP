@@ -48,8 +48,31 @@ export interface Deps {
 	quotaRemaining?: () => Promise<number | undefined>;
 }
 
-/** Un plan mayor no se valida: la validación sola gastaría una parte enorme de la cuota diaria (15.000 en Basic). */
-export const MAX_PLAN_OPERATIONS = 1000;
+/** Tope por plan (Google admite 10.000 por petición; la cuota Basic es 15.000/día). */
+export const MAX_PLAN_OPERATIONS = 5000;
+/** A partir de este tamaño se valida una muestra: el apply es atómico (todo o nada), así que un error no aplicado a medias. */
+export const SAMPLE_VALIDATION_FROM = 200;
+const SAMPLE_SIZE = 100;
+
+/** Muestra para validar planes grandes: todas las formas de operación distintas + reparto uniforme. */
+export function validationSample(ops: Json[]): Json[] | undefined {
+	if (ops.length < SAMPLE_VALIDATION_FROM) return undefined;
+	// Con IDs temporales (-1, -2…) unas operaciones dependen de otras: hay que validar el lote completo.
+	if (/customers\/\d+\/[A-Za-z]+\/-\d+/.test(JSON.stringify(ops))) return undefined;
+	const picked = new Set<number>();
+	const shapes = new Set<string>();
+	ops.forEach((op, i) => {
+		const kind = Object.keys(op)[0];
+		const shape = `${kind}:${Object.keys(op[kind] ?? {}).sort().join(",")}`;
+		if (!shapes.has(shape)) {
+			shapes.add(shape);
+			picked.add(i);
+		}
+	});
+	const step = ops.length / SAMPLE_SIZE;
+	for (let k = 0; picked.size < SAMPLE_SIZE && k < SAMPLE_SIZE; k++) picked.add(Math.floor(k * step));
+	return [...picked].sort((a, b) => a - b).map((i) => ops[i]);
+}
 
 export interface PlanDraft {
 	kind: string;
@@ -186,7 +209,13 @@ async function validate(deps: Deps, draft: PlanDraft, warnings: string[]) {
 	if (pre.length) await deps.client.mutateService(draft.customerId, "customAudiences", pre.map((p) => p.operation), true);
 	if (!draft.operations.length) return;
 	if (!pre.length) {
-		await deps.client.mutate(draft.customerId, draft.operations, true);
+		const sample = validationSample(draft.operations);
+		await deps.client.mutate(draft.customerId, sample ?? draft.operations, true);
+		if (sample) {
+			warnings.push(
+				`Plan grande: se han validado ${sample.length} de ${draft.operations.length} operaciones (todas las variantes distintas y una muestra uniforme) para ahorrar cuota. Si alguna de las demás no es válida, Google rechaza el lote entero al aplicar y no se aplica nada.`,
+			);
+		}
 		return;
 	}
 	const existing = await deps.client.searchAll(
@@ -241,11 +270,12 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 			summary: draft.summary.slice(0, 5),
 			warnings,
 			errors: [],
-			message: `El plan tiene ${n} operaciones y el máximo por plan es ${MAX_PLAN_OPERATIONS}. Divídelo en planes de hasta ${MAX_PLAN_OPERATIONS}: validar y aplicar ${n} operaciones costaría unas ${2 * n} de la cuota diaria. No se ha validado ni aplicado nada.`,
+			message: `El plan tiene ${n} operaciones y el máximo por plan es ${MAX_PLAN_OPERATIONS}. Divídelo en planes de hasta ${MAX_PLAN_OPERATIONS}. No se ha validado ni aplicado nada.`,
 		};
 	}
 	const remaining = await deps.quotaRemaining?.().catch(() => undefined);
-	const needed = 2 * n + 2 * draft.stateQueries.length;
+	const validateCost = draft.preSteps?.length ? n : (validationSample(draft.operations)?.length ?? n);
+	const needed = validateCost + n + 2 * draft.stateQueries.length;
 	if (remaining !== undefined && needed > remaining) {
 		return {
 			ok: false,
@@ -253,7 +283,7 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 			summary: draft.summary.slice(0, 5),
 			warnings,
 			errors: [],
-			message: `Este plan necesita unas ${needed} operaciones de la API (validar + aplicar ${n} cambios) y hoy te quedan ${remaining}. No se ha validado para no gastar cuota en un plan que no se podría aplicar. Divídelo o espera a las 00:00 UTC.`,
+			message: `Este plan necesita unas ${needed} operaciones de la API (validar + aplicar ${n} cambios) y hoy te quedan ${remaining}. No se ha validado para no gastar cuota en un plan que no se podría aplicar. Divídelo en planes más pequeños o espera a las 00:00 UTC.`,
 		};
 	}
 

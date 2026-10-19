@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { GoogleAdsClient } from "../src/ads/client";
 import { userLimits } from "../src/config";
-import { applyPlan, cancelPlan, createPlan, getAuditLog, listPendingPlans, loadPlan } from "../src/plans/engine";
+import { applyPlan, cancelPlan, createPlan, getAuditLog, listPendingPlans, loadPlan, validationSample } from "../src/plans/engine";
 import { buildCampaignBudgetPlan } from "../src/plans/builders";
 import { decide } from "../src/quota-policy";
 import { _resetChildCache, assertReadable, listAccessibleCustomers } from "../src/tools/read";
@@ -183,9 +183,9 @@ describe("19/10: coste de los planes antes de validar", () => {
 		operations: Array.from({ length: n }, (_, i) => ({ customerNegativeCriterionOperation: { create: { placement: { url: `s${i}.com` } } } })),
 		stateQueries: [],
 	});
-	it("rechaza planes de más de 1.000 operaciones sin validar", async () => {
+	it("rechaza planes de más de 5.000 operaciones sin validar", async () => {
 		const { deps, ads } = setup();
-		const r = await createPlan(deps, draft(1001));
+		const r = await createPlan(deps, draft(5001));
 		expect(r).toMatchObject({ ok: false, stage: "size" });
 		expect(ads.mutateCalls).toHaveLength(0);
 	});
@@ -198,3 +198,21 @@ describe("19/10: coste de los planes antes de validar", () => {
 		expect((await createPlan({ ...deps, quotaRemaining: async () => 500 }, draft(60))).ok).toBe(true);
 	});
 });
+
+describe("19/10: validación por muestra en planes grandes", () => {
+	const ops = (n: number) => Array.from({ length: n }, (_, i) => ({ customerNegativeCriterionOperation: { create: { placement: { url: `s${i}.com` } } } }));
+	it("4.491 exclusiones: valida 100, aplica todas y cuesta ~la mitad", async () => {
+		const { deps, ads } = setup();
+		const draft = { kind: "exclude_placements", customerId: CID, summary: ["x"], operations: ops(4491), stateQueries: [] };
+		const r = await createPlan({ ...deps, quotaRemaining: async () => 4700 }, draft);
+		expect(r.ok).toBe(true);
+		expect(ads.mutateCalls[0].body.mutateOperations).toHaveLength(100);
+		expect((r as { warnings: string[] }).warnings.join()).toMatch(/100 de 4491/);
+	});
+	it("planes pequeños o con IDs temporales se validan completos", async () => {
+		expect(validationSample(ops(150))).toBeUndefined();
+		const withTemp = [...ops(300), { adGroupOperation: { create: { resourceName: `customers/${CID}/adGroups/-1` } } }];
+		expect(validationSample(withTemp)).toBeUndefined();
+	});
+});
+
