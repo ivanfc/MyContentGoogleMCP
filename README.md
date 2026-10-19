@@ -38,7 +38,7 @@ Claude ──OAuth 2.1 (DCR/PKCE)──► Worker mycontent-google-ads-mcp
 | Credenciales | Las del Worker (MCC) | Las suyas (OAuth con scope `adwords`) |
 | Cuentas visibles | Jerarquía de la MCC (`customer_client`) | `listAccessibleCustomers` + jerarquía de cada MCC suya (máx. 50 raíces); `login-customer-id` por cuenta |
 | Planes y auditoría | Los suyos (+ auditoría anterior a multiusuario) | Solo los suyos (otro usuario recibe «no existe») |
-| Cuota diaria (`get_quota_usage`) | `QUOTA_DAILY_TOTAL` (14.000) | `QUOTA_DAILY_PER_USER` (1.000) y, entre todos los invitados, `QUOTA_DAILY_OTHERS` (5.000) |
+| Cuota diaria (`get_quota_usage`) | `QUOTA_DAILY_TOTAL` (15.000, el máximo de Basic) | `QUOTA_DAILY_PER_USER` (1.000) y, entre todos los invitados, `QUOTA_DAILY_OTHERS` (5.000) |
 
 - La cuota es de operaciones de la API (cada página GAQL = 1; cada operación de un mutate o validación = 1), día natural UTC, en un Durable Object global (`UsageQuota`). La API de Google (Basic) da 15.000/día por proyecto en ventana móvil de 24 h: el total se deja por debajo para que el propietario nunca se quede sin cuota por culpa de otros.
 - Las barreras (presupuesto máximo, subida máxima, confirmación reforzada) se aplican igual a todos.
