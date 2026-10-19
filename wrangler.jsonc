@@ -37,7 +37,7 @@
 		"OWNER_EMAILS": "ivan@mycontent.agency",
 		// Cuota diaria de operaciones de la API (Basic = 15.000/día por proyecto, compartida por todos): total del MCP,
 		// tope conjunto de los no propietarios (el resto queda reservado al propietario) y tope por usuario.
-		"QUOTA_DAILY_TOTAL": "14000",
+		"QUOTA_DAILY_TOTAL": "15000",
 		"QUOTA_DAILY_OTHERS": "5000",
 		"QUOTA_DAILY_PER_USER": "1000",
 		"MAX_DAILY_BUDGET": "60",

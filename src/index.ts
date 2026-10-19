@@ -68,6 +68,8 @@ Reglas:
 6. Para construir operaciones no previstas por las herramientas específicas, usa describe_mutate_operation / describe_api_method (esquema oficial), y para consultas GAQL describe_gaql_fields, en lugar de inventar campos.`;
 
 export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
+	/** Operaciones de la API consumidas por la llamada en curso (se registran en el log tool_call). */
+	private opsThisCall = 0;
 	server = new McpServer({ name: "MyContent Google Ads MCP", version: "0.1.0" }, { instructions: SERVER_INSTRUCTIONS });
 
 	private services() {
@@ -101,11 +103,12 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		// Cuota diaria compartida de la API: el propietario tiene reservado lo que los demás no pueden gastar.
 		const quota = this.env.USAGE_QUOTA.get(this.env.USAGE_QUOTA.idFromName("global")) as unknown as DurableObjectStub<UsageQuota>;
 		const cfg = {
-			total: Number(this.env.QUOTA_DAILY_TOTAL || 14000),
+			total: Number(this.env.QUOTA_DAILY_TOTAL || 15000),
 			others: Number(this.env.QUOTA_DAILY_OTHERS || 5000),
 			perUser: Number(this.env.QUOTA_DAILY_PER_USER || 1000),
 		};
 		client.beforeRequest = async (n) => {
+			this.opsThisCall += n;
 			let r: { ok: boolean; reason?: string };
 			try {
 				r = await quota.consume(email.toLowerCase(), owner, n, cfg);
@@ -145,6 +148,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 		// biome-ignore lint: el SDK tipa el shape de forma genérica
 		(this.server as any).registerTool(name, { description, inputSchema: shape }, async (args: any) => {
 			const started = Date.now();
+			this.opsThisCall = 0;
 			let autoFixed = false;
 			const log = (outcome: "ok" | "rejected" | "error", e?: unknown) =>
 				// Una línea JSON por llamada (Workers Logs). Sin argumentos ni resultados: solo herramienta, cuenta, duración y error.
@@ -156,6 +160,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 						user: this.props?.email,
 						outcome,
 						ms: Date.now() - started,
+						ops: this.opsThisCall,
 						...(autoFixed ? { auto_fixed: true } : {}),
 						...(e ? { error: errorSummary(e) } : {}),
 					}),
@@ -323,7 +328,7 @@ export class GoogleAdsMCP extends McpAgent<Env, Record<string, never>, Props> {
 				return {
 					day_utc: today,
 					used_by_you: used,
-					your_daily_limit: owner ? Number(this.env.QUOTA_DAILY_TOTAL || 14000) : Number(this.env.QUOTA_DAILY_PER_USER || 1000),
+					your_daily_limit: owner ? Number(this.env.QUOTA_DAILY_TOTAL || 15000) : Number(this.env.QUOTA_DAILY_PER_USER || 1000),
 					...(owner && st?.day === today ? { total_used: st.total, guests_used: st.others, guests_limit: Number(this.env.QUOTA_DAILY_OTHERS || 5000), users_today: Object.keys(st.users).length } : {}),
 				};
 			},
