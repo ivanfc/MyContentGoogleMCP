@@ -44,7 +44,12 @@ export interface Deps {
 	claim?: (planId: string) => Promise<boolean>;
 	/** Re-comprueba al aplicar que la cuenta sigue siendo escribible (allowlist / pertenencia a la MCC). */
 	assertWritable?: (customerId: string) => Promise<void>;
+	/** Operaciones de la API que le quedan hoy al usuario (undefined = sin dato). */
+	quotaRemaining?: () => Promise<number | undefined>;
 }
+
+/** Un plan mayor no se valida: la validación sola gastaría una parte enorme de la cuota diaria (15.000 en Basic). */
+export const MAX_PLAN_OPERATIONS = 1000;
 
 export interface PlanDraft {
 	kind: string;
@@ -75,7 +80,7 @@ export type PlanResult =
 			operations_count: number;
 			validation: string;
 	  }
-	| { ok: false; stage: "guards" | "validation"; summary: string[]; warnings: string[]; errors: unknown; message: string };
+	| { ok: false; stage: "guards" | "validation" | "size" | "quota"; summary: string[]; warnings: string[]; errors: unknown; message: string };
 
 const now = (deps: Deps) => (deps.now ? deps.now() : Date.now());
 
@@ -225,6 +230,31 @@ export async function createPlan(deps: Deps, draft: PlanDraft): Promise<PlanResu
 			return { ok: false, stage: "guards", summary: draft.summary, warnings, errors: e.violations, message: e.message };
 		}
 		throw e;
+	}
+
+	// Coste antes de gastar nada: validar cuesta n operaciones y aplicar otras n (más las lecturas de estado).
+	const n = draft.operations.length + (draft.preSteps?.length ?? 0) + (draft.apiCall ? 1 : 0);
+	if (n > MAX_PLAN_OPERATIONS) {
+		return {
+			ok: false,
+			stage: "size",
+			summary: draft.summary.slice(0, 5),
+			warnings,
+			errors: [],
+			message: `El plan tiene ${n} operaciones y el máximo por plan es ${MAX_PLAN_OPERATIONS}. Divídelo en planes de hasta ${MAX_PLAN_OPERATIONS}: validar y aplicar ${n} operaciones costaría unas ${2 * n} de la cuota diaria. No se ha validado ni aplicado nada.`,
+		};
+	}
+	const remaining = await deps.quotaRemaining?.().catch(() => undefined);
+	const needed = 2 * n + 2 * draft.stateQueries.length;
+	if (remaining !== undefined && needed > remaining) {
+		return {
+			ok: false,
+			stage: "quota",
+			summary: draft.summary.slice(0, 5),
+			warnings,
+			errors: [],
+			message: `Este plan necesita unas ${needed} operaciones de la API (validar + aplicar ${n} cambios) y hoy te quedan ${remaining}. No se ha validado para no gastar cuota en un plan que no se podría aplicar. Divídelo o espera a las 00:00 UTC.`,
+		};
 	}
 
 	const stateHash = await computeStateHash(deps.client, draft.customerId, draft.stateQueries);
